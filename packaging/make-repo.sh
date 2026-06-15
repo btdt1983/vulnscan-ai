@@ -150,6 +150,14 @@ for dist in "${!DISTS[@]}"; do
         echo "EOF"
         echo
         echo "sudo dnf install vulnscan-ai</pre>"
+        echo "<h2>Packages</h2><ul>"
+        for pkg in "$REPO_ROOT/$dist/"*.rpm; do
+            [ -e "$pkg" ] || continue
+            pn="$(basename "$pkg")"
+            sz="$(du -h "$pkg" | cut -f1)"
+            echo "<li><a href=\"$pn\">$pn</a> <span style=color:#666>($sz)</span></li>"
+        done
+        echo "</ul>"
         echo "<p style=color:#666>Packages are GPG-signed; metadata is signed (repo_gpgcheck).</p>"
     } > "$REPO_ROOT/$dist/index.html"
 done
