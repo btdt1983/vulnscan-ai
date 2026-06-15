@@ -1,0 +1,51 @@
+name: release
+
+# Build, sign, and publish to the signed dnf repo on a version tag.
+# Runs on a SELF-HOSTED runner that lives on (or can reach) the repo host and
+# holds the signing key on an OpenPGP smartcard / HSM.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    # Label your repo-host runner with these (Settings -> Actions -> Runners).
+    runs-on: [self-hosted, linux, vulnscan-ai-repo]
+    env:
+      REPO_ROOT: /srv/repo
+      REPO_BASEURL: https://repo.techhack.nl
+      # Build targets. el8 needs the python39 module (default python3 is 3.6);
+      # see README before enabling it.
+      DISTS: el9
+      # noarch package is mirrored into these EL trees with no rebuild.
+      EXTRA_DISTS: el10
+      # Signing identity = the smartcard/HSM key already imported on the runner.
+      VULNSCANAI_GPG_EMAIL: ${{ vars.SIGNING_EMAIL }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches packaged version
+        run: |
+          v=$(awk -F'= *' '/^version *=/{gsub(/[[:space:]]/,"",$2);print $2;exit}' setup.cfg)
+          [ "${GITHUB_REF_NAME#v}" = "$v" ] || { echo "tag != version $v"; exit 1; }
+
+      - name: Preset smartcard PIN (so signing is non-interactive)
+        # The runner's gpg-agent must be able to use the card unattended. With a
+        # YubiKey, preset the user PIN for the signing key's keygrip.
+        run: |
+          export GPG_TTY=$(tty || echo /dev/null)
+          gpg --card-status >/dev/null 2>&1 || true
+          if [ -n "${{ secrets.CARD_PIN }}" ] && [ -n "${{ vars.SIGNING_KEYGRIP }}" ]; then
+            /usr/libexec/gpg-preset-passphrase --preset "${{ vars.SIGNING_KEYGRIP }}" <<< "${{ secrets.CARD_PIN }}"
+          fi
+
+      - name: Build, sign, publish, reload
+        run: bash packaging/release.sh
+
+      - name: Smoke test the live repo (all dists)
+        run: |
+          for d in $DISTS $EXTRA_DISTS; do
+            curl -fsS -o /dev/null "$REPO_BASEURL/$d/repodata/repomd.xml"
+          done
+          curl -fsS -o /dev/null "$REPO_BASEURL/RPM-GPG-KEY-techhack"

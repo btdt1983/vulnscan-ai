@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+*.pdf
+*.html
+*.sarif
+findings.json
+.claude/
+dist/

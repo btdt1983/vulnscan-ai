@@ -1,0 +1,70 @@
+#compdef vulnscan-ai
+# zsh completion for vulnscan-ai
+
+_vulnscan-ai() {
+  local curcontext="$curcontext" state line
+  local -a cmds sev scanners
+  cmds=(
+    'info:show host/FIPS/GPU/scanner/provider status'
+    'scan:scan for vulnerabilities'
+    'fix:propose and (with approval) apply fixes'
+    'report:render a report/export from saved findings'
+    'providers:list AI providers'
+    'setup:first-run wizard to pick an offline AI model'
+    'update-oval:download the OpenSCAP OVAL feed'
+    'scheduled:non-interactive scan + dated report'
+  )
+  sev=(low moderate important critical)
+  scanners=(dnf oscap)
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '--version[show version and exit]' \
+    '--config[config JSON path]:file:_files' \
+    '--state-dir[state/cache directory]:dir:_files -/' \
+    '--provider[AI provider]:provider:(claude openai gemini kimi local)' \
+    '--model[model id override]:model:' \
+    '1: :->cmd' \
+    '*:: :->args' && return
+
+  case $state in
+    cmd)
+      _describe -t commands 'vulnscan-ai command' cmds ;;
+    args)
+      case $line[1] in
+        scan)
+          _arguments \
+            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            "--min-severity[severity floor]:severity:($sev)" \
+            '--no-enrich[skip CVE-feed enrichment]' \
+            '--pdf[write PDF report]:file:_files' \
+            '--json[write JSON export]:file:_files' \
+            '--sarif[write SARIF 2.1.0]:file:_files' ;;
+        fix)
+          _arguments \
+            '--scan[scan first]' \
+            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            '--no-enrich[skip CVE-feed enrichment]' \
+            "--min-severity[severity floor]:severity:($sev)" \
+            '--yes[auto-approve every fix]' \
+            '--dry-run[plan only; execute nothing]' \
+            '--pdf[write PDF report]:file:_files' ;;
+        report)
+          _arguments \
+            '(-o --output)'{-o,--output}'[output path (.pdf/.html/.json/.sarif)]:file:_files' \
+            "--min-severity[severity floor]:severity:($sev)" ;;
+        scheduled)
+          _arguments \
+            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            '--no-enrich[skip CVE-feed enrichment]' \
+            "--min-severity[severity floor]:severity:($sev)" \
+            '--plan[embed AI proposals (no execution)]' \
+            '--html[HTML report instead of PDF]' \
+            '--keep[retain N reports]:n:' \
+            "--fail-on[exit 3 at/above severity]:severity:($sev)" ;;
+        *) _message 'no more arguments' ;;
+      esac ;;
+  esac
+}
+
+_vulnscan-ai "$@"

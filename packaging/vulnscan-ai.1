@@ -1,0 +1,190 @@
+.TH VULNSCAN-AI 1 "June 2026" "vulnscan-ai @VERSION@" "User Commands"
+.SH NAME
+vulnscan-ai \- RHEL vulnerability scanner with AI-assisted, approval-gated remediation
+.SH SYNOPSIS
+.B vulnscan-ai
+[\fIGLOBAL OPTIONS\fR]
+.I COMMAND
+[\fICOMMAND OPTIONS\fR]
+.SH DESCRIPTION
+.B vulnscan-ai
+scans RHEL-based hosts (RHEL, AlmaLinux, Rocky, CentOS Stream, Fedora) for known
+vulnerabilities using the package manager (dnf/RHSA), OpenSCAP/OVAL, and public
+CVE feeds (Red Hat Security Data API, NIST NVD). It then uses a large language
+model (Claude by default; OpenAI, Gemini, Kimi, or a local Ollama model
+optionally) to propose remediation. Fixes are applied only after explicit
+approval and only after passing a safety deny-list.
+.PP
+The tool is FIPS-aware: it relies on the system OpenSSL, pins TLS 1.2+, and uses
+SHA-2 digests only. It can export PDF, HTML, JSON, and SARIF 2.1.0 reports, and
+ships a systemd timer for unattended scan-and-report.
+.SH GLOBAL OPTIONS
+These precede the command.
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BI \-\-config " CONFIG"
+Path to a configuration JSON file.
+.TP
+.BI \-\-state\-dir " DIR"
+Override the state/cache directory (findings and reports).
+.TP
+.BI \-\-provider " PROVIDER"
+AI provider: \fBclaude\fR, \fBopenai\fR, \fBgemini\fR, \fBkimi\fR, or \fBlocal\fR.
+.TP
+.BI \-\-model " MODEL"
+Model id override, e.g. \fIclaude-opus-4-8\fR or \fIllama3.2:1b\fR.
+.SH SEVERITY VALUES
+Where a severity is accepted, use one of, in increasing order:
+.BR low ", " moderate ", " important ", " critical
+(\fBhigh\fR is treated as \fBimportant\fR, \fBmedium\fR as \fBmoderate\fR).
+.SH COMMANDS
+.SS info
+Show version, FIPS status, GPU/CPU, available scanners, and AI provider readiness.
+No options.
+.SS scan
+Detect vulnerabilities, enrich from CVE feeds, print a table, and save findings.
+.TP
+.BI \-\-scanner " NAME"
+Scanner to run (repeatable): \fBdnf\fR or \fBoscap\fR.
+.TP
+.BI \-\-min\-severity " SEV"
+Only keep findings at or above this severity.
+.TP
+.B \-\-no\-enrich
+Skip Red Hat/NVD CVE-feed lookups (faster; fully offline).
+.TP
+.BI \-\-pdf " PATH"
+Also write a PDF report.
+.TP
+.BI \-\-json " PATH"
+Also write a JSON export.
+.TP
+.BI \-\-sarif " PATH"
+Also write a SARIF 2.1.0 file.
+.SS fix
+Ask the AI provider to propose remediation, then apply with approval. Proposed
+commands are screened against a safety deny-list. The per-finding prompt accepts
+\fBy\fR (yes), \fBn\fR (no), \fBa\fR (all), or \fBq\fR (quit).
+.TP
+.B \-\-scan
+Scan first instead of using the last saved findings.
+.TP
+.BI \-\-scanner " NAME"
+Scanner(s) to use with \fB\-\-scan\fR (repeatable).
+.TP
+.B \-\-no\-enrich
+Skip CVE-feed enrichment with \fB\-\-scan\fR.
+.TP
+.BI \-\-min\-severity " SEV"
+Only act on findings at or above this severity.
+.TP
+.B \-\-yes
+Auto-approve every screened fix (non-interactive).
+.TP
+.B \-\-dry\-run
+Produce the plan but execute nothing.
+.TP
+.BI \-\-pdf " PATH"
+Write a PDF report after fixing.
+.SS report
+Render a report or export from the last saved scan. The output extension selects
+the format: \fI.pdf\fR, \fI.html\fR, \fI.json\fR, or \fI.sarif\fR.
+.TP
+.BR \-o ", " \-\-output " " \fIPATH\fR
+Output file (default \fIvulnscan-ai-report.pdf\fR).
+.TP
+.BI \-\-min\-severity " SEV"
+Only include findings at or above this severity.
+.SS providers
+List AI providers, default models, key environment variables, and readiness.
+No options.
+.SS setup
+Interactive first-run wizard: detect GPU/RAM, list offline models sized to the
+host, optionally install Ollama, download the chosen model, and save it as the
+default provider/model. Offered automatically on the first interactive run;
+suppress with \fBVULNSCANAI_NO_SETUP=1\fR. No options.
+.SS update\-oval
+Detect the distribution and download/stage the OpenSCAP OVAL CVE feed under
+\fI<state-dir>/oval/\fR, enabling the \fBoscap\fR scanner. No options.
+.SS scheduled
+Non-interactive scan and dated report for the systemd timer or cron. Never
+applies fixes. Rotates old reports and can signal severity via the exit code.
+.TP
+.BI \-\-scanner " NAME"
+Scanner(s) to run (repeatable).
+.TP
+.B \-\-no\-enrich
+Skip CVE-feed enrichment.
+.TP
+.BI \-\-min\-severity " SEV"
+Only keep findings at or above this severity.
+.TP
+.B \-\-plan
+Embed AI remediation proposals in the report (no execution).
+.TP
+.B \-\-html
+Write an HTML report instead of PDF.
+.TP
+.BI \-\-keep " N"
+Retain only the newest N reports (default 30).
+.TP
+.BI \-\-fail\-on " SEVERITY"
+Exit 3 if any finding is at or above this severity.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+No findings to act on, or a step failed (e.g. OVAL download).
+.TP
+.B 2
+AI provider error (key missing, or model/server unreachable).
+.TP
+.B 3
+\fBscheduled \-\-fail\-on\fR threshold met.
+.TP
+.B 130
+Interrupted.
+.SH ENVIRONMENT
+.TP
+.B ANTHROPIC_API_KEY
+API key for the \fBclaude\fR provider (default).
+.TP
+.BR OPENAI_API_KEY ", " GEMINI_API_KEY ", " MOONSHOT_API_KEY
+API keys for \fBopenai\fR, \fBgemini\fR, and \fBkimi\fR respectively.
+.TP
+.BR OLLAMA_HOST ", " OLLAMA_MODEL ", " OLLAMA_TIMEOUT
+Local (\fBlocal\fR) provider: server URL, model name, request timeout (seconds).
+.TP
+.B NVD_API_KEY
+Optional; raises the NVD enrichment rate limit.
+.TP
+.BR VULNSCANAI_PROVIDER ", " VULNSCANAI_MODEL ", " VULNSCANAI_STATE_DIR
+Override the provider, model, and state directory.
+.TP
+.B VULNSCANAI_NO_SETUP
+If set, never run the first-run wizard automatically.
+.SH FILES
+.TP
+.I /etc/vulnscan-ai/config.json
+System configuration.
+.TP
+.I ~/.config/vulnscan-ai/config.json
+Per-user configuration (where the setup wizard saves its choice).
+.TP
+.I /var/lib/vulnscan-ai/
+State directory: findings.json, reports/, oval/.
+.SH "CONFIGURATION PRECEDENCE"
+Highest wins: command-line flags, then environment variables, then the per-user
+config, then the system config, then built-in defaults.
+.SH SEE ALSO
+.BR dnf (8),
+.BR oscap (8),
+.BR systemctl (1).
+Full reference and examples: \fI/usr/share/doc/vulnscan-ai/COMMANDS.md\fR.

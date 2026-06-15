@@ -1,0 +1,12 @@
+{
+  "provider": "claude",
+  "model": null,
+  "scanners": ["dnf"],
+  "state_dir": "/var/lib/vulnscan-ai",
+  "reports_dir": "/var/lib/vulnscan-ai/reports",
+  "min_severity": "low",
+  "enrich": true,
+  "auto_approve": false,
+  "dry_run": false,
+  "timeout": 30
+}

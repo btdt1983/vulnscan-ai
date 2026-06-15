@@ -1,0 +1,27 @@
+[Unit]
+Description=vulnscan-ai scheduled vulnerability scan and report
+Documentation=man:vulnscan-ai(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# API keys / overrides live here (0640 root). Optional: a scan-only run
+# (no --plan) needs no key and sends nothing off the host.
+EnvironmentFile=-/etc/vulnscan-ai/vulnscan-ai.env
+ExecStart=/usr/bin/vulnscan-ai scheduled --keep 30
+
+# Be a good neighbour on production hosts.
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+
+# Hardening (scan-only job; the interactive `fix` apply is never run here).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/vulnscan-ai /var/cache/dnf /var/cache/PackageKit

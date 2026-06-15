@@ -1,0 +1,13 @@
+{
+  "provider": "claude",
+  "model": null,
+  "scanners": ["dnf"],
+  "min_severity": "low",
+  "enrich": true,
+  "auto_approve": false,
+  "dry_run": false,
+  "timeout": 30,
+  "redhat_api": "https://access.redhat.com/hydra/rest/securitydata",
+  "nvd_api": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+  "nvd_api_key": null
+}

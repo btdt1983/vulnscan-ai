@@ -1,0 +1,14 @@
+[Unit]
+Description=Run vulnscan-ai daily
+Documentation=man:vulnscan-ai(1)
+
+[Timer]
+# Daily, with up to an hour of jitter to avoid stampeding shared mirrors.
+OnCalendar=daily
+RandomizedDelaySec=1h
+# Catch up if the machine was off at the scheduled time.
+Persistent=true
+Unit=vulnscan-ai.service
+
+[Install]
+WantedBy=timers.target

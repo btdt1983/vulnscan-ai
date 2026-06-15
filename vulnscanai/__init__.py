@@ -1,0 +1,11 @@
+"""vulnscan-ai: RHEL vulnerability scanner with AI-assisted remediation.
+
+A FIPS-aware command line tool that scans RHEL-based systems for known
+vulnerabilities (via dnf/RHSA, OpenSCAP and public CVE feeds), uses an LLM
+provider (Claude by default; OpenAI/Gemini/Kimi/local optional) to propose
+remediation, applies fixes only after explicit approval, and can export a
+PDF report.
+"""
+
+__version__ = "0.1.5"
+__all__ = ["__version__"]

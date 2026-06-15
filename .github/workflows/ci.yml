@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------- #
+  # Fast unit tests + CLI smoke test on a RHEL-like image.
+  # ---------------------------------------------------------------- #
+  test:
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: dnf -y install python3
+      - name: Unit tests (stdlib only)
+        run: python3 -m unittest discover -s tests -v
+      - name: CLI smoke test
+        run: |
+          python3 -m vulnscanai --version
+          python3 -m vulnscanai info
+          python3 -m vulnscanai providers
+
+  # ---------------------------------------------------------------- #
+  # Build the binary RPM with rpmbuild, install it (resolving deps
+  # from the real repos, incl. openscap-scanner), and smoke test.
+  # ---------------------------------------------------------------- #
+  rpmbuild:
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tooling
+        run: |
+          dnf -y install rpm-build rpmdevtools python3-devel \
+            pyproject-rpm-macros systemd-rpm-macros \
+            python3-setuptools python3-wheel python3-tomli python3-pip
+          rpmdev-setuptree
+      - name: Build RPM (runs %check tests)
+        run: bash packaging/build-rpm.sh
+      - name: Install and smoke test
+        run: |
+          rpm=$(find ~/rpmbuild/RPMS -name 'vulnscan-ai-*.noarch.rpm' | head -1)
+          echo "installing $rpm"
+          dnf -y install "$rpm"
+          vulnscan-ai --version
+          vulnscan-ai info
+          # openscap-scanner is a hard dep, so oscap must now exist
+          command -v oscap
+          # systemd unit files were installed
+          test -f /usr/lib/systemd/system/vulnscan-ai.timer
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnscan-ai-rpm
+          path: ~/rpmbuild/RPMS/noarch/*.rpm
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- #
+  # Clean-chroot build with mock (alma+epel-9). Validates the package
+  # builds from a pristine SRPM with only declared BuildRequires.
+  # ---------------------------------------------------------------- #
+  mock:
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:9
+      options: --privileged          # mock needs namespaces/bind mounts
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mock + tooling
+        run: |
+          dnf -y install epel-release
+          dnf -y install mock rpm-build rpmdevtools python3-devel \
+            pyproject-rpm-macros
+          rpmdev-setuptree
+      - name: Build SRPM
+        id: srpm
+        run: |
+          srpm=$(bash packaging/build-rpm.sh srpm | tail -1)
+          echo "srpm=$srpm" >> "$GITHUB_OUTPUT"
+          echo "built $srpm"
+      - name: Set up unprivileged builder
+        run: |
+          useradd -m builder
+          usermod -aG mock builder
+          cp "${{ steps.srpm.outputs.srpm }}" /tmp/pkg.src.rpm
+          chown builder:builder /tmp/pkg.src.rpm
+      - name: mock rebuild (clean chroot)
+        run: |
+          su builder -c "mock -r alma+epel-9-x86_64 \
+            --isolation=simple --enable-network \
+            --resultdir=/tmp/mock-out --rebuild /tmp/pkg.src.rpm"
+      - name: Upload mock results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnscan-ai-mock-rpm
+          path: /tmp/mock-out/*.rpm
+          if-no-files-found: error
