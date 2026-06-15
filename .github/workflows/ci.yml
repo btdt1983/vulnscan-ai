@@ -36,6 +36,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install build tooling
         run: |
+          # pyproject-rpm-macros and python3-wheel live in CRB, off by default
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
           dnf -y install rpm-build rpmdevtools python3-devel \
             pyproject-rpm-macros systemd-rpm-macros \
             python3-setuptools python3-wheel python3-tomli python3-pip
@@ -73,7 +76,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install mock + tooling
         run: |
-          dnf -y install epel-release
+          # pyproject-rpm-macros lives in CRB, off by default
+          dnf -y install epel-release dnf-plugins-core
+          dnf config-manager --set-enabled crb
           dnf -y install mock rpm-build rpmdevtools python3-devel \
             pyproject-rpm-macros
           rpmdev-setuptree
