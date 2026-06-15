@@ -7,8 +7,8 @@
 #   <REPO_ROOT>/
 #     RPM-GPG-KEY-techhack          one shared public signing key
 #     techhack.repo                 client drop-in (.repo)
-#     index.html                    browsable landing page
-#     el9/  repodata/ + *.rpm        all EL9 tools (vulnscan-ai, future tools)
+#     index.html                    root landing page (lists distributions)
+#     el9/  index.html + repodata/ + *.rpm   all EL9 tools + per-version install
 #     el10/ ...                      add more dists as needed
 #
 # Drop any tool's RPMs into rpmbuild/RPMS (or point RPMS_SRC at them) and re-run;
@@ -111,23 +111,48 @@ repo_gpgcheck=1
 gpgkey=$REPO_BASEURL/$KEYFILE
 EOF
 
-# 6. Browsable landing page.
+# 6. Browsable landing pages.
+HTML_STYLE="<style>body{font-family:system-ui,sans-serif;max-width:48rem;margin:3rem auto;padding:0 1rem;line-height:1.5}code,pre{background:#f4f4f4;padding:.1rem .3rem;border-radius:4px}pre{padding:1rem;overflow:auto}a{color:#0a58ca}</style>"
+
+# Root: just a clean directory of distributions. The install command lives on
+# each el<N>/ page so it is unambiguous about which EL version it targets.
 {
     echo "<!doctype html><meta charset=utf-8><title>techhack RPM repo</title>"
-    echo "<style>body{font-family:system-ui,sans-serif;max-width:48rem;margin:3rem auto;padding:0 1rem;line-height:1.5}code,pre{background:#f4f4f4;padding:.1rem .3rem;border-radius:4px}pre{padding:1rem;overflow:auto}a{color:#0a58ca}</style>"
+    echo "$HTML_STYLE"
     echo "<h1>techhack RPM repository</h1>"
-    echo "<p>Signed dnf repository. Install on a RHEL-based host:</p>"
-    echo "<pre>sudo rpm --import $REPO_BASEURL/$KEYFILE"
-    echo "sudo curl -o /etc/yum.repos.d/techhack.repo $REPO_BASEURL/techhack.repo"
-    echo "sudo dnf install vulnscan-ai</pre>"
-    echo "<h2>Available distributions</h2><ul>"
+    echo "<p>Signed dnf repository for RHEL-based hosts. Pick your distribution for install instructions:</p>"
+    echo "<ul>"
     for dist in $(printf '%s\n' "${!DISTS[@]}" | sort); do
         echo "<li><a href=\"$dist/\">$dist/</a></li>"
     done
     echo "</ul>"
-    echo "<p><a href=\"$KEYFILE\">GPG public key</a> &middot; <a href=\"techhack.repo\">techhack.repo</a></p>"
+    echo "<p><a href=\"$KEYFILE\">GPG public key</a> &middot; <a href=\"techhack.repo\">techhack.repo</a> (covers all versions via \$releasever)</p>"
     echo "<p style=color:#666>Packages are GPG-signed; metadata is signed (repo_gpgcheck).</p>"
 } > "$REPO_ROOT/index.html"
+
+# Per-version: a self-contained, copy-paste install for exactly this EL version.
+for dist in "${!DISTS[@]}"; do
+    {
+        echo "<!doctype html><meta charset=utf-8><title>techhack RPM repo ($dist)</title>"
+        echo "$HTML_STYLE"
+        echo "<p><a href=\"../\">&larr; all distributions</a></p>"
+        echo "<h1>techhack tools (${dist^^})</h1>"
+        echo "<p>Install on ${dist^^}:</p>"
+        echo "<pre>sudo rpm --import $REPO_BASEURL/$KEYFILE"
+        echo "sudo tee /etc/yum.repos.d/techhack.repo &lt;&lt;'EOF'"
+        echo "[techhack]"
+        echo "name=techhack tools (${dist^^})"
+        echo "baseurl=$REPO_BASEURL/$dist"
+        echo "enabled=1"
+        echo "gpgcheck=1"
+        echo "repo_gpgcheck=1"
+        echo "gpgkey=$REPO_BASEURL/$KEYFILE"
+        echo "EOF"
+        echo
+        echo "sudo dnf install vulnscan-ai</pre>"
+        echo "<p style=color:#666>Packages are GPG-signed; metadata is signed (repo_gpgcheck).</p>"
+    } > "$REPO_ROOT/$dist/index.html"
+done
 
 echo
 echo ">> repo ready at $REPO_ROOT  (dists: ${!DISTS[*]})"

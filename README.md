@@ -213,26 +213,38 @@ REPO_BASEURL=https://repo.example.com/vulnscan-ai packaging/make-repo.sh
 ```
 
 The script generates a signing key (first run), signs every package, builds and
-**detached-signs the repo metadata**, exports the public key, and writes a
-`.repo` file. On a client:
+**detached-signs the repo metadata**, exports the public key, and writes the
+`.repo` file plus browsable index pages. The layout is one repo per EL version:
+
+```
+repo/
+  index.html            root landing page (lists distributions)
+  techhack.repo         client drop-in (covers all versions via $releasever)
+  RPM-GPG-KEY-techhack  shared public signing key
+  el9/  index.html + repodata/ + *.rpm    EL9 packages + per-version install
+  el10/ ...                               add more dists as needed
+```
+
+Each `el<N>/index.html` carries a self-contained, copy-paste install pinned to
+that EL version. On a client:
 
 ```bash
-sudo rpm --import https://repo.example.com/vulnscan-ai/RPM-GPG-KEY-vulnscan-ai
-sudo curl -o /etc/yum.repos.d/vulnscan-ai.repo \
-     https://repo.example.com/vulnscan-ai/vulnscan-ai.repo
+sudo rpm --import https://repo.example.com/RPM-GPG-KEY-techhack
+sudo curl -o /etc/yum.repos.d/techhack.repo \
+     https://repo.example.com/techhack.repo
 sudo dnf install vulnscan-ai
 ```
 
-The generated `vulnscan-ai.repo`:
+The generated `techhack.repo` (one file works on el9/el10/... via `$releasever`):
 
 ```ini
-[vulnscan-ai]
-name=vulnscan-ai
-baseurl=https://repo.example.com/vulnscan-ai
+[techhack]
+name=techhack tools (EL$releasever)
+baseurl=https://repo.example.com/el$releasever
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=https://repo.example.com/vulnscan-ai/RPM-GPG-KEY-vulnscan-ai
+gpgkey=https://repo.example.com/RPM-GPG-KEY-techhack
 ```
 
 > The demo key is passphrase-less for automation. For a real release line, use a
