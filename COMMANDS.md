@@ -97,6 +97,17 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 | `--pdf PATH` | Also write a PDF report. |
 | `--json PATH` | Also write a JSON export. |
 | `--sarif PATH` | Also write a SARIF 2.1.0 file (GitHub code scanning, DefectDojo). |
+| `--ignore PATTERN` | Suppress findings matching id / CVE / advisory / package / title (glob, repeatable). Augments the configured baseline. |
+
+> **Reducing false positives.** Several measures run automatically: the `oscap`
+> scanner only reports real *patch* advisories (inventory/compliance definitions
+> are dropped) with proper CVE ids + severity; the `ports` scanner suppresses
+> ports that firewalld blocks; and findings that the `dnf` and `oscap` scanners
+> both report (same advisory/CVE) are merged. Use a **baseline** to silence
+> accepted findings: set `"ignore": [...]` in the config, list patterns (one per
+> line) in `~/.config/vulnscan-ai/ignore`, set `VULNSCANAI_IGNORE=a,b`, or pass
+> `--ignore`. Patterns match a finding id, CVE, advisory, package, or title
+> (globs allowed); the scan prints how many were suppressed.
 
 ### Scan examples
 
@@ -158,6 +169,7 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 | `--pdf PATH` | Write a PDF report after fixing. |
 | `--export-script PATH` | Write a ready-to-run **bash** fix script (with backup/validate/rollback) and **do not apply**. |
 | `--export-ansible PATH` | Write an **Ansible playbook** of the fixes and **do not apply**. |
+| `--ignore PATTERN` | With `--scan`: suppress matching findings (glob, repeatable). |
 
 Interactive prompt per finding: `[y]es / [n]o / [a]ll / [q]uit`.
 

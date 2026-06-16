@@ -16,7 +16,8 @@ from .ai import PROVIDERS, ProviderError, get_provider
 from .config import Config
 from .fips import status_line
 from .models import (
-    Finding, findings_from_json, findings_to_json, merge_findings, severity_rank,
+    Finding, apply_ignores, dedup_cross_scanner, findings_from_json,
+    findings_to_json, merge_findings, severity_rank,
 )
 from .report import write_report
 from .scanners import SCANNERS, NvdEnricher, detect_distro, download_oval
@@ -72,7 +73,8 @@ def _filter_severity(findings: List[Finding], minimum: str) -> List[Finding]:
 # --------------------------------------------------------------------------- #
 # scanning
 # --------------------------------------------------------------------------- #
-def do_scan(cfg: Config, scanners: List[str], enrich: bool) -> List[Finding]:
+def do_scan(cfg: Config, scanners: List[str], enrich: bool,
+            extra_ignores: Optional[List[str]] = None) -> List[Finding]:
     findings: List[Finding] = []
     for name in scanners:
         if name == NvdEnricher.name:
@@ -95,6 +97,12 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool) -> List[Finding]:
         except Exception as exc:  # noqa: BLE001
             _eprint(f"    ! {name} failed: {exc}")
     findings = merge_findings(findings)
+    findings = dedup_cross_scanner(findings)
+    patterns = list(cfg.ignore) + list(extra_ignores or [])
+    if patterns:
+        findings, suppressed = apply_ignores(findings, patterns)
+        if suppressed:
+            _eprint(f"  - {suppressed} finding(s) suppressed by baseline")
     if enrich and findings:
         _eprint(f"  > enriching {len(findings)} finding(s) from CVE feeds...")
         NvdEnricher(cfg).enrich(findings)
@@ -148,7 +156,8 @@ def cmd_info(cfg: Config, args) -> int:
 def cmd_scan(cfg: Config, args) -> int:
     scanners = args.scanner or cfg.scanners
     print(f"Scanning {_hostname()} ...")
-    findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich)
+    findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich,
+                       extra_ignores=args.ignore)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
     _save_findings(cfg, findings)
     print()
@@ -200,7 +209,8 @@ def cmd_fix(cfg: Config, args) -> int:
     if args.scan:
         print(f"Scanning {_hostname()} ...")
         findings = do_scan(cfg, args.scanner or cfg.scanners,
-                           enrich=not args.no_enrich and cfg.enrich)
+                           enrich=not args.no_enrich and cfg.enrich,
+                           extra_ignores=getattr(args, "ignore", None))
     else:
         findings = _load_findings(cfg)
     if not findings:
@@ -448,6 +458,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--pdf", help="also write a PDF report to this path")
     sp.add_argument("--json", help="also write a JSON export to this path")
     sp.add_argument("--sarif", help="also write a SARIF 2.1.0 file to this path")
+    sp.add_argument("--ignore", action="append", metavar="PATTERN",
+                    help="suppress findings matching id/CVE/advisory/package/"
+                         "title (glob, repeatable); augments the baseline")
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("fix", help="propose and (with approval) apply fixes")
@@ -465,6 +478,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write a ready-to-run bash fix script (does not apply)")
     sp.add_argument("--export-ansible", metavar="PATH",
                     help="write an Ansible playbook of the fixes (does not apply)")
+    sp.add_argument("--ignore", action="append", metavar="PATTERN",
+                    help="with --scan: suppress findings matching this pattern "
+                         "(glob, repeatable)")
     sp.set_defaults(func=cmd_fix)
 
     sp = sub.add_parser(

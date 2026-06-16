@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Red Hat severity ordering, used for sorting and filtering.
 SEVERITY_ORDER = {
@@ -135,6 +136,89 @@ def merge_findings(findings: List[Finding]) -> List[Finding]:
         else:
             by_id[f.id] = f
     return list(by_id.values())
+
+
+def _merge_group(members: List[Finding]) -> Finding:
+    """Merge findings that describe the same vuln into one richest record."""
+    if len(members) == 1:
+        return members[0]
+    # Prefer a record that has a package, then an advisory, then severity.
+    base = max(members, key=lambda f: (bool(f.package), bool(f.advisory),
+                                       severity_rank(f.severity)))
+    cves, refs = set(base.cve_ids), set(base.references)
+    for m in members:
+        cves |= set(m.cve_ids)
+        refs |= set(m.references)
+        if severity_rank(m.severity) > severity_rank(base.severity):
+            base.severity = m.severity
+        for attr in ("package", "installed_version", "fixed_version",
+                     "advisory", "cvss_score", "cvss_vector"):
+            if not getattr(base, attr) and getattr(m, attr):
+                setattr(base, attr, getattr(m, attr))
+    base.cve_ids = sorted(cves)
+    base.references = sorted(refs)
+    return base
+
+
+def dedup_cross_scanner(findings: List[Finding]) -> List[Finding]:
+    """Collapse findings from different scanners that share an advisory or CVE.
+
+    `merge_findings` only dedups within a scanner (id includes source); dnf and
+    oscap report the same missing advisory, so without this the same vuln shows
+    twice. Groups are formed transitively over shared advisory/CVE keys.
+    """
+    n = len(findings)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    owner: Dict[str, int] = {}
+    for i, f in enumerate(findings):
+        keys = set(f.cve_ids)
+        if f.advisory:
+            keys.add(f.advisory)
+        for k in keys:
+            if k in owner:
+                union(i, owner[k])
+            else:
+                owner[k] = i
+
+    groups: Dict[int, List[Finding]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(findings[i])
+    return [_merge_group(members) for members in groups.values()]
+
+
+def match_ignore(finding: Finding, patterns: List[str]) -> bool:
+    """True if any baseline pattern matches the finding (id, CVE, advisory,
+    package, or title — globs allowed). Blank/`#` lines are ignored."""
+    fields = [finding.id, finding.advisory or "", finding.package or "",
+              finding.title or "", *finding.cve_ids]
+    for pat in patterns:
+        pat = pat.strip()
+        if not pat or pat.startswith("#"):
+            continue
+        if any(fnmatch.fnmatch(val, pat) for val in fields if val):
+            return True
+    return False
+
+
+def apply_ignores(findings: List[Finding],
+                  patterns: List[str]) -> Tuple[List[Finding], int]:
+    """Return (kept, suppressed_count) after applying baseline patterns."""
+    if not patterns:
+        return findings, 0
+    kept = [f for f in findings if not match_ignore(f, patterns)]
+    return kept, len(findings) - len(kept)
 
 
 def findings_to_json(findings: List[Finding], indent: int = 2) -> str:

@@ -171,6 +171,22 @@ services, exposure ≥ 9.0, skipping un-hardenable units); widen or narrow it wi
 the same transactional engine (`daemon-reload` → `systemd-analyze verify` →
 restart → rollback).
 
+### Keeping false positives low
+
+The scanners are built to avoid noise:
+
+- **OVAL (`oscap`)** reports only real *patch* advisories — `inventory`/compliance
+  definitions (e.g. "the OS is installed") are dropped — with proper CVE ids and
+  severities pulled from the feed metadata.
+- **`ports`** suppresses ports that **firewalld** blocks (a socket on `0.0.0.0`
+  isn't an exposure if the firewall drops it).
+- Findings that **`dnf` and `oscap` both report** (same advisory/CVE) are merged
+  into one.
+- A **baseline** silences accepted findings: `"ignore": [...]` in the config,
+  one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
+  `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or
+  title (globs allowed); the scan reports how many it suppressed.
+
 PDF output always produces a real PDF: it uses `reportlab` if installed,
 otherwise a built-in dependency-free PDF writer. Use a `.html` extension to
 get an HTML report instead.

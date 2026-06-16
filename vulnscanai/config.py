@@ -40,6 +40,7 @@ class Config:
     dry_run: bool = False                    # never execute, only plan
     timeout: int = 30
     reports_dir: Optional[str] = None        # default: <state_dir>/reports
+    ignore: List[str] = field(default_factory=list)  # baseline suppression
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -54,6 +55,12 @@ class Config:
                     data.update(json.load(fh))
         cfg = cls(**{k: v for k, v in data.items()
                      if k in cls.__dataclass_fields__})  # type: ignore[attr-defined]
+        # Merge a newline-delimited baseline file (one pattern per line).
+        ignore_file = os.path.expanduser("~/.config/vulnscan-ai/ignore")
+        if os.path.isfile(ignore_file):
+            with open(ignore_file, "r", encoding="utf-8") as fh:
+                cfg.ignore.extend(ln.strip() for ln in fh
+                                  if ln.strip() and not ln.startswith("#"))
         cfg._apply_env()
         return cfg
 
@@ -85,6 +92,9 @@ class Config:
             self.state_dir = env["VULNSCANAI_STATE_DIR"]
         if env.get("NVD_API_KEY"):
             self.nvd_api_key = env["NVD_API_KEY"]
+        if env.get("VULNSCANAI_IGNORE"):
+            self.ignore.extend(p.strip() for p in
+                               env["VULNSCANAI_IGNORE"].split(",") if p.strip())
 
     def ensure_state_dir(self) -> str:
         os.makedirs(self.state_dir, mode=0o700, exist_ok=True)

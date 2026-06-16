@@ -10,9 +10,10 @@ import unittest
 from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 from vulnscanai.models import (
-    Finding, Remediation, findings_from_json, findings_to_json, merge_findings,
-    severity_rank,
+    Finding, Remediation, apply_ignores, dedup_cross_scanner, findings_from_json,
+    findings_to_json, match_ignore, merge_findings, severity_rank,
 )
+from vulnscanai.scanners.openscap import OpenScapScanner, parse_oval_definitions
 from vulnscanai.pdfwriter import PdfBuilder
 from vulnscanai.remediation import apply, restore_backup, screen_command
 from vulnscanai.scanners.dnf_rhsa import parse_nevra, _CVE_LINE, _ADV_LINE
@@ -343,6 +344,118 @@ class TestPortScanner(unittest.TestCase):
         ss = ('tcp LISTEN 0 128 127.0.0.1:3306 0.0.0.0:* users:(("db",pid=1,fd=3))\n'
               'tcp LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=2,fd=4))\n')
         self.assertEqual(audit_ports(parse_ss(ss)), [])
+
+    def test_firewall_blocked_port_dropped(self):
+        # mysql blocked by firewall -> dropped; telnet still flagged.
+        findings = audit_ports(
+            parse_ss(self.SS),
+            allowed=lambda proto, port: False if port == 3306 else None)
+        services = {f.raw["service"] for f in findings}
+        self.assertEqual(services, {"telnet"})
+
+
+_OVAL_DEFS = """<?xml version="1.0"?>
+<oval_definitions>
+ <definitions>
+  <definition id="def:patch1" class="patch">
+   <metadata>
+    <title>ALSA-2025:0001: kernel security update (Moderate)</title>
+    <reference source="CVE" ref_id="CVE-2025-1111"/>
+    <reference source="CVE" ref_id="CVE-2025-2222"/>
+   </metadata>
+  </definition>
+  <definition id="def:inv1" class="inventory">
+   <metadata><title>AlmaLinux 9 is installed</title></metadata>
+  </definition>
+  <definition id="def:patch2" class="patch">
+   <metadata>
+    <title>ALSA-2025:0002: bash fix (Important)</title>
+    <reference source="CVE" ref_id="CVE-2025-3333"/>
+   </metadata>
+  </definition>
+ </definitions>
+</oval_definitions>
+"""
+
+_OVAL_RESULTS = """<?xml version="1.0"?>
+<oval_results xmlns="http://oval.mitre.org/XMLSchema/oval-results-5">
+ <results><system><definitions>
+  <definition definition_id="def:patch1" result="true"/>
+  <definition definition_id="def:inv1" result="true"/>
+  <definition definition_id="def:patch2" result="false"/>
+ </definitions></system></results>
+</oval_results>
+"""
+
+
+class TestOvalScanner(unittest.TestCase):
+    def test_parse_definitions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "defs.xml")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(_OVAL_DEFS)
+            d = parse_oval_definitions(p)
+            self.assertEqual(d["def:patch1"]["class"], "patch")
+            self.assertEqual(d["def:patch1"]["severity"], "moderate")
+            self.assertEqual(d["def:patch1"]["advisory"], "ALSA-2025:0001")
+            self.assertEqual(d["def:patch1"]["cves"],
+                             ["CVE-2025-1111", "CVE-2025-2222"])
+            self.assertEqual(d["def:inv1"]["class"], "inventory")
+
+    def test_results_filter_class_and_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            defs = os.path.join(tmp, "defs.xml")
+            res = os.path.join(tmp, "results.xml")
+            with open(defs, "w", encoding="utf-8") as fh:
+                fh.write(_OVAL_DEFS)
+            with open(res, "w", encoding="utf-8") as fh:
+                fh.write(_OVAL_RESULTS)
+            scanner = OpenScapScanner(config=None)
+            findings = scanner._parse_results(res, defs)
+            # only def:patch1 survives: inv1 is inventory, patch2 is false
+            self.assertEqual(len(findings), 1)
+            f = findings[0]
+            self.assertEqual(f.source, "oscap")
+            self.assertEqual(f.severity, "moderate")
+            self.assertEqual(f.advisory, "ALSA-2025:0001")
+            self.assertEqual(len(f.cve_ids), 2)
+
+
+class TestCrossScannerDedup(unittest.TestCase):
+    def test_merge_shared_advisory(self):
+        dnf = Finding(source="dnf", package="kernel", advisory="RHSA-2025:1",
+                      cve_ids=["CVE-2025-1"], severity="important")
+        oscap = Finding(source="oscap", advisory="RHSA-2025:1",
+                        cve_ids=["CVE-2025-1", "CVE-2025-2"], severity="moderate")
+        merged = dedup_cross_scanner([dnf, oscap])
+        self.assertEqual(len(merged), 1)
+        m = merged[0]
+        self.assertEqual(m.package, "kernel")             # richer record kept
+        self.assertEqual(m.severity, "important")          # max severity
+        self.assertEqual(set(m.cve_ids), {"CVE-2025-1", "CVE-2025-2"})
+
+    def test_unrelated_and_config_findings_stay_separate(self):
+        a = Finding(source="ssh", title="weak A")
+        b = Finding(source="ssh", title="weak B")
+        c = Finding(source="dnf", package="bash", cve_ids=["CVE-2025-9"])
+        self.assertEqual(len(dedup_cross_scanner([a, b, c])), 3)
+
+
+class TestBaseline(unittest.TestCase):
+    def test_match_and_apply(self):
+        f1 = _finding(cve_ids=["CVE-2026-0001"], package="bash")
+        f2 = _finding(cve_ids=["CVE-2026-9999"], advisory="RHSA-2026:9",
+                      package="kernel")
+        kept, sup = apply_ignores([f1, f2], ["CVE-2026-0001"])
+        self.assertEqual((kept, sup), ([f2], 1))
+        kept, sup = apply_ignores([f1, f2], ["kern*"])      # package glob
+        self.assertEqual((kept, sup), ([f1], 1))
+        kept, sup = apply_ignores([f1, f2], ["RHSA-2026:9"])  # advisory
+        self.assertEqual((kept, sup), ([f1], 1))
+        kept, sup = apply_ignores([f1, f2], ["# comment", "", "   "])
+        self.assertEqual(sup, 0)
+        self.assertTrue(match_ignore(f1, [f1.id]))           # by id
+        self.assertTrue(match_ignore(_finding(title="weak sshd"), ["weak*"]))
 
 
 class TestFixExport(unittest.TestCase):

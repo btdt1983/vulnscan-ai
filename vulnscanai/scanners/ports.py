@@ -14,10 +14,19 @@ service it runs through the transactional engine.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+import sys
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from ..models import Finding
 from .base import Scanner, have, run
+
+# Minimal firewalld service -> "port/proto" map for the common cases that show
+# up as listeners; explicit --list-ports covers everything else.
+_SERVICE_PORTS = {
+    "ssh": "22/tcp", "http": "80/tcp", "https": "443/tcp", "ftp": "21/tcp",
+    "telnet": "23/tcp", "mysql": "3306/tcp", "postgresql": "5432/tcp",
+    "redis": "6379/tcp", "mongodb": "27017/tcp", "vnc-server": "5900/tcp",
+}
 
 # Plaintext / legacy protocols that should not be exposed (port -> label).
 _PLAINTEXT: Dict[int, str] = {
@@ -80,15 +89,49 @@ def parse_ss(text: str) -> List[Dict[str, object]]:
     return out
 
 
-def audit_ports(sockets: List[Dict[str, object]]) -> List[Finding]:
-    """Apply the conservative exposure policy to parsed sockets."""
+def firewall_allowed_ports() -> Optional[Set[str]]:
+    """Return the set of "port/proto" the firewall lets through, or None when
+    firewalld isn't running (so we can't tell -> assume reachable)."""
+    if not have("firewall-cmd"):
+        return None
+    try:
+        rc, state, _ = run(["firewall-cmd", "--state"], timeout=10)
+    except Exception:  # noqa: BLE001
+        return None
+    if "running" not in (state or "").lower():
+        return None
+    allowed: Set[str] = set()
+    try:
+        _, ports, _ = run(["firewall-cmd", "--list-ports"], timeout=10)
+        allowed.update(ports.split())
+        _, svcs, _ = run(["firewall-cmd", "--list-services"], timeout=10)
+        for svc in svcs.split():
+            if svc in _SERVICE_PORTS:
+                allowed.add(_SERVICE_PORTS[svc])
+    except Exception:  # noqa: BLE001
+        return None
+    return allowed
+
+
+def audit_ports(sockets: List[Dict[str, object]], *,
+                allowed: Callable[[str, int], Optional[bool]] =
+                lambda _proto, _port: None) -> List[Finding]:
+    """Apply the conservative exposure policy to parsed sockets.
+
+    `allowed(proto, port)` returns True/False if the host firewall's stance on
+    the port is known, or None when unknown. A port the firewall blocks (False)
+    isn't reachable off-host, so it's dropped (not a real exposure).
+    """
     out: List[Finding] = []
     seen = set()
     for s in sockets:
         addr = str(s["address"])
         port = int(s["port"])
+        proto = str(s["proto"])
         if _is_loopback(addr):
             continue  # not reachable off-host
+        if allowed(proto, port) is False:
+            continue  # firewall blocks it -> not actually exposed
         hit = classify(port)
         if not hit:
             continue
@@ -127,4 +170,14 @@ class PortScanner(Scanner):
             return []
         if not out.strip():
             return []
-        return audit_ports(parse_ss(out))
+        sockets = parse_ss(out)
+        fw = firewall_allowed_ports()
+        if fw is None:
+            return audit_ports(sockets)
+        pred = (lambda proto, port: f"{port}/{proto}" in fw)
+        findings = audit_ports(sockets, allowed=pred)
+        suppressed = len(audit_ports(sockets)) - len(findings)
+        if suppressed:
+            print(f"    ports: {suppressed} exposure(s) suppressed "
+                  f"(blocked by firewalld)", file=sys.stderr)
+        return findings
