@@ -7,15 +7,16 @@ import os
 import tempfile
 import unittest
 
-from vulnscanai import export, report
+from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 from vulnscanai.models import (
     Finding, Remediation, findings_from_json, findings_to_json, merge_findings,
     severity_rank,
 )
 from vulnscanai.pdfwriter import PdfBuilder
-from vulnscanai.remediation import apply, screen_command
+from vulnscanai.remediation import apply, restore_backup, screen_command
 from vulnscanai.scanners.dnf_rhsa import parse_nevra, _CVE_LINE, _ADV_LINE
+from vulnscanai.scanners.ssh_config import audit_sshd_config, parse_sshd_config
 
 
 def _finding(**kw):
@@ -133,6 +134,122 @@ class TestProviders(unittest.TestCase):
         self.assertEqual(ms.default_model, "open-mixtral-8x7b")
         self.assertEqual(ms.api_key_env, "MISTRAL_API_KEY")
         self.assertTrue(ms.endpoint.endswith("/chat/completions"))
+
+
+class TestTransactionalApply(unittest.TestCase):
+    def _tx_finding(self, tmp, **rem_kw):
+        target = os.path.join(tmp, "sshd_config")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write("ORIGINAL\n")
+        f = _finding(source="ssh", package=None, cve_ids=[], title="weak sshd")
+        f.remediation = Remediation(backup_paths=[target], **rem_kw)
+        return f, target
+
+    def test_dry_run_executes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f, target = self._tx_finding(
+                tmp, commands=["sed -i s/X/Y/ " + os.path.join(tmp, "sshd_config")],
+                validate_cmd="sshd -t", service="sshd", restart_mode="reload")
+            ok = apply(f, dry_run=True, state_dir=tmp)
+            self.assertTrue(ok)
+            statuses = {r["status"] for r in f.remediation.apply_results}
+            self.assertEqual(statuses, {"dry-run"})
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+            self.assertFalse(f.remediation.applied)
+
+    def test_validate_failure_rolls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(
+                tmp, commands=["sed -i s/ORIGINAL/MODIFIED/ " + target],
+                validate_cmd="false")  # validation always fails -> rollback
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertFalse(ok)
+            self.assertTrue(f.remediation.rolled_back)
+            self.assertFalse(f.remediation.applied)
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+
+    def test_success_no_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(
+                tmp, commands=["sed -i s/ORIGINAL/HARDENED/ " + target],
+                validate_cmd="true")  # no service -> skip systemctl
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertTrue(ok)
+            self.assertFalse(f.remediation.rolled_back)
+            self.assertTrue(f.remediation.applied)
+            self.assertEqual(open(target).read().strip(), "HARDENED")
+
+    def test_blocked_command_aborts_before_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(tmp, commands=["rm -rf /"])
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertFalse(ok)
+            self.assertEqual(f.remediation.apply_results[0]["status"], "blocked")
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+
+    def test_manual_restore_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(
+                tmp, commands=["sed -i s/ORIGINAL/HARDENED/ " + target],
+                validate_cmd="true")
+            apply(f, dry_run=False, state_dir=tmp)
+            self.assertEqual(open(target).read().strip(), "HARDENED")
+            self.assertTrue(restore_backup(f))
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+            self.assertTrue(f.remediation.rolled_back)
+
+
+class TestSshScanner(unittest.TestCase):
+    def test_parse_and_audit(self):
+        cfg = parse_sshd_config(
+            "# comment\nPermitRootLogin yes\nCiphers aes256-ctr,3des-cbc\n"
+            "MACs hmac-sha1\nProtocol 2\n")
+        self.assertEqual(cfg["permitrootlogin"], "yes")
+        findings = audit_sshd_config(cfg)
+        titles = {f.title for f in findings}
+        self.assertIn("SSH permits direct root login", titles)
+        self.assertIn("SSH offers weak ciphers", titles)
+        self.assertIn("SSH offers weak MACs", titles)
+        # config findings carry no package/cve but must have distinct ids
+        self.assertEqual(len({f.id for f in findings}), len(findings))
+        for f in findings:
+            self.assertEqual(f.source, "ssh")
+            self.assertIn("recommended", f.raw)
+
+    def test_clean_config_no_findings(self):
+        cfg = parse_sshd_config(
+            "PermitRootLogin no\nCiphers aes256-gcm@openssh.com\n"
+            "MACs hmac-sha2-256-etm@openssh.com\n")
+        self.assertEqual(audit_sshd_config(cfg), [])
+
+
+class TestFixExport(unittest.TestCase):
+    def _tx_finding(self):
+        f = _finding(source="ssh", package=None, cve_ids=[], title="weak sshd")
+        f.remediation = Remediation(
+            summary="harden sshd", commands=["sed -i s/a/b/ /etc/ssh/sshd_config"],
+            backup_paths=["/etc/ssh/sshd_config"], validate_cmd="sshd -t",
+            service="sshd", restart_mode="reload")
+        return f
+
+    def test_bash_script(self):
+        script = export_fix.to_bash_script([self._tx_finding()])
+        self.assertTrue(script.startswith("#!/usr/bin/env bash"))
+        for token in ("set -euo pipefail", "backup /etc/ssh/sshd_config",
+                      "trap", "sshd -t", "systemctl reload sshd"):
+            self.assertIn(token, script)
+
+    def test_ansible_playbook_is_valid_yaml(self):
+        play_text = export_fix.to_ansible_playbook([self._tx_finding()])
+        data = json.loads(play_text[play_text.index("["):])  # JSON == valid YAML
+        self.assertEqual(data[0]["hosts"], "all")
+        self.assertTrue(data[0]["become"])
+        self.assertEqual(data[0]["handlers"][0]["name"], "reload sshd")
+        self.assertTrue(any("validate" in t["name"] for t in data[0]["tasks"]))
 
 
 class TestPdf(unittest.TestCase):

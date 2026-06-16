@@ -14,7 +14,8 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 |---|---|
 | [`info`](#info) | Show host / FIPS / GPU / scanner / provider status |
 | [`scan`](#scan) | Scan for vulnerabilities; save findings; optional report/export |
-| [`fix`](#fix) | Propose AI remediation and (with approval) apply it |
+| [`fix`](#fix) | Propose AI remediation and (with approval) apply it — transactional, with auto-rollback |
+| [`rollback`](#rollback) | Restore a previously-applied transactional fix from its backup |
 | [`report`](#report) | Render a report/export from the last saved scan |
 | [`providers`](#providers) | List AI providers and their readiness |
 | [`setup`](#setup) | First-run wizard: pick & download an offline AI model |
@@ -33,7 +34,7 @@ These go **before** the command.
 | `--version` | Print the version and exit |
 | `--config CONFIG` | Path to a config JSON (overrides the default search) |
 | `--state-dir STATE_DIR` | Override the state/cache directory |
-| `--provider PROVIDER` | AI provider: `claude` \| `openai` \| `gemini` \| `kimi` \| `local` |
+| `--provider PROVIDER` | AI provider: `claude` \| `openai` \| `gemini` \| `kimi` \| `deepseek` \| `mistral` \| `local` |
 | `--model MODEL` | Model id override (e.g. `claude-opus-4-8`, `llama3.2:1b`) |
 
 ```bash
@@ -74,7 +75,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo) and `oscap` (OpenSCAP/OVAL). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening). Default: from config (`dnf`). |
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |
@@ -116,9 +117,18 @@ Ask the AI provider to propose remediation for saved (or freshly scanned)
 findings, then apply with approval. Proposed commands are screened against a
 safety deny-list; nothing runs without confirmation unless `--yes`.
 
+**Transactional fixes.** When a plan touches a config file or service (it
+declares `backup_paths`/`service`/`validate_cmd`), `fix` runs it transactionally:
+it snapshots the file(s), applies the change, **validates the config before
+restarting** (e.g. `sshd -t`), reloads the service and checks it stays active —
+and **automatically restores the backup if any step fails** (e.g. an sshd edit
+that would lock you out). Backups live under `<state-dir>/backups/<id>/`; undo a
+successful fix later with [`rollback`](#rollback).
+
 ```
 vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
                 [--min-severity SEV] [--yes] [--dry-run] [--pdf PATH]
+                [--export-script PATH] [--export-ansible PATH]
 ```
 
 | Option | Description |
@@ -130,6 +140,8 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 | `--yes` | Auto-approve every (screened) fix — non-interactive. |
 | `--dry-run` | Produce the plan but execute nothing. |
 | `--pdf PATH` | Write a PDF report after fixing. |
+| `--export-script PATH` | Write a ready-to-run **bash** fix script (with backup/validate/rollback) and **do not apply**. |
+| `--export-ansible PATH` | Write an **Ansible playbook** of the fixes and **do not apply**. |
 
 Interactive prompt per finding: `[y]es / [n]o / [a]ll / [q]uit`.
 
@@ -153,7 +165,33 @@ vulnscan-ai --provider local --model llama3.2:1b fix --dry-run
 
 # Use Claude's most capable model for higher-quality plans
 vulnscan-ai --provider claude --model claude-opus-4-8 fix --min-severity important
+
+# Don't apply — generate a bash script and an Ansible playbook to review/run later
+vulnscan-ai fix --export-script fix.sh --export-ansible fix.yml
 ```
+
+---
+
+## `rollback`
+
+Restore a previously-applied **transactional** fix from the backup `fix` stored.
+Useful if a change applied cleanly but you later want to revert it.
+
+```
+vulnscan-ai rollback [--list] [ID]
+```
+
+| Option | Description |
+|---|---|
+| `--list` | List fixes that have a stored backup (with their finding id and state). |
+| `ID` | Finding id (from `--list`) to roll back. |
+
+```bash
+vulnscan-ai rollback --list      # see what can be restored
+vulnscan-ai rollback 0a43d0c46dc7
+```
+
+Restoring re-applies the service so its runtime state matches the restored config.
 
 ---
 

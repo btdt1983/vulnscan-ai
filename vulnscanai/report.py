@@ -114,6 +114,19 @@ def build_blocks(findings: List[Finding], hostname: str, generated: str) -> List
                 f"via {rem.provider}/{rem.model})")})
             if rem.summary:
                 blocks.append({"t": "para", "text": rem.summary})
+            if rem.backup_paths or rem.service or rem.validate_cmd:
+                tx = "Transactional fix: backup -> apply -> validate -> "
+                tx += f"{rem.restart_mode or 'none'} -> rollback on failure"
+                blocks.append({"t": "small", "text": tx})
+                if rem.backup_paths:
+                    blocks.append({"t": "small",
+                                   "text": f"Backup: {', '.join(rem.backup_paths)}"})
+                if rem.validate_cmd:
+                    blocks.append({"t": "small",
+                                   "text": f"Validate: {rem.validate_cmd}"})
+                if rem.service:
+                    blocks.append({"t": "small", "text": (
+                        f"Service: systemctl {rem.restart_mode} {rem.service}")})
             for cmd in rem.commands:
                 blocks.append({"t": "cmd", "text": cmd})
             for step in rem.config_changes:
@@ -123,6 +136,12 @@ def build_blocks(findings: List[Finding], hostname: str, generated: str) -> List
             if rem.apply_results:
                 statuses = ", ".join(str(r.get("status")) for r in rem.apply_results)
                 blocks.append({"t": "small", "text": f"Apply result: {statuses}"})
+            if rem.rolled_back:
+                blocks.append({"t": "small",
+                               "text": "Status: ROLLED BACK (change reverted)"})
+            elif rem.backup_dir:
+                blocks.append({"t": "small",
+                               "text": f"Backup stored at: {rem.backup_dir}"})
         blocks.append({"t": "spacer", "h": 8})
     return blocks
 

@@ -11,7 +11,7 @@ import socket
 import sys
 from typing import List, Optional
 
-from . import __version__, remediation
+from . import __version__, export_fix, remediation
 from .ai import PROVIDERS, ProviderError, get_provider
 from .config import Config
 from .fips import status_line
@@ -170,6 +170,15 @@ def _approve(finding: Finding, auto: bool) -> str:
         print(f"Plan: {rem.summary}  (risk={rem.risk}, "
               f"confidence={rem.confidence:.0%}, "
               f"reboot={'yes' if rem.requires_reboot else 'no'})")
+        if rem.backup_paths or rem.service or rem.validate_cmd:
+            print("    [transactional] backup -> apply -> validate -> "
+                  f"{rem.restart_mode or 'none'} -> rollback on failure")
+            if rem.backup_paths:
+                print(f"      backup:   {', '.join(rem.backup_paths)}")
+            if rem.validate_cmd:
+                print(f"      validate: {rem.validate_cmd}")
+            if rem.service:
+                print(f"      service:  systemctl {rem.restart_mode} {rem.service}")
         for c in rem.commands:
             blocked = remediation.screen_command(c)
             mark = "  [BLOCKED]" if blocked else ""
@@ -211,9 +220,24 @@ def cmd_fix(cfg: Config, args) -> int:
 
     remediation.propose_all(provider, findings, on_progress=progress)
 
+    # Export-only mode: write a bash script and/or Ansible playbook, do not apply.
+    if args.export_script or args.export_ansible:
+        if args.export_script:
+            with open(args.export_script, "w", encoding="utf-8") as fh:
+                fh.write(export_fix.to_bash_script(findings))
+            os.chmod(args.export_script, 0o755)
+            print(f"Wrote bash script: {args.export_script}")
+        if args.export_ansible:
+            with open(args.export_ansible, "w", encoding="utf-8") as fh:
+                fh.write(export_fix.to_ansible_playbook(findings))
+            print(f"Wrote Ansible playbook: {args.export_ansible}")
+        _save_findings(cfg, findings)
+        return 0
+
     dry = args.dry_run or cfg.dry_run
     auto = args.yes or cfg.auto_approve
     applied = 0
+    rolled = 0
     approve_all = auto
     for f in findings:
         decision = "all" if approve_all else _approve(f, auto=False)
@@ -226,14 +250,18 @@ def cmd_fix(cfg: Config, args) -> int:
         if decision != "yes":
             print("  skipped.")
             continue
-        ok = remediation.apply(f, dry_run=dry)
+        ok = remediation.apply(f, dry_run=dry, state_dir=cfg.state_dir)
         applied += 1 if ok else 0
         for r in (f.remediation.apply_results if f.remediation else []):
             print(f"    [{r['status']}] {r['command']}")
+        if f.remediation and f.remediation.rolled_back:
+            rolled += 1
+            print("    ROLLED BACK — change reverted, service left healthy.")
 
     _save_findings(cfg, findings)
     print(f"\n{'(dry-run) ' if dry else ''}Processed; "
-          f"{applied} fix(es) applied successfully.")
+          f"{applied} fix(es) applied successfully"
+          f"{f', {rolled} rolled back' if rolled else ''}.")
     reboot = [f for f in findings if f.remediation and f.remediation.applied
               and f.remediation.requires_reboot]
     if reboot:
@@ -242,6 +270,39 @@ def cmd_fix(cfg: Config, args) -> int:
         out = write_report(findings, args.pdf, _hostname(), _now())
         print(f"Report written to {out}")
     return 0
+
+
+def cmd_rollback(cfg: Config, args) -> int:
+    findings = _load_findings(cfg)
+    if not findings:
+        return 1
+    restorable = [f for f in findings
+                  if f.remediation and f.remediation.backup_dir]
+    if args.list or not args.id:
+        if not restorable:
+            print("No restorable fixes (none have a stored backup).")
+            return 0
+        print("Restorable fixes (backup available):")
+        for f in restorable:
+            rem = f.remediation
+            state = "rolled-back" if rem.rolled_back else (
+                "applied" if rem.applied else "pending")
+            print(f"  {f.id}  [{state}]  {f.title}")
+            print(f"        backup: {rem.backup_dir}")
+        if not args.id:
+            print("\nRun 'vulnscan-ai rollback <id>' to restore one.")
+        return 0
+    target = next((f for f in findings if f.id == args.id), None)
+    if target is None or not (target.remediation and target.remediation.backup_dir):
+        _eprint(f"No restorable fix with id {args.id!r}.")
+        return 1
+    print(f"Rolling back {args.id}: {target.title}")
+    ok = remediation.restore_backup(target)
+    for r in (target.remediation.apply_results if target.remediation else []):
+        print(f"    [{r['status']}] {r['command']}")
+    _save_findings(cfg, findings)
+    print("Rollback complete." if ok else "Rollback failed.")
+    return 0 if ok else 1
 
 
 def cmd_report(cfg: Config, args) -> int:
@@ -378,7 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("scan", help="scan for vulnerabilities")
     sp.add_argument("--scanner", action="append",
-                    help="scanner to run (repeatable): dnf, oscap")
+                    help="scanner to run (repeatable): dnf, oscap, ssh")
     sp.add_argument("--min-severity", help="floor: low|moderate|important|critical")
     sp.add_argument("--no-enrich", action="store_true",
                     help="skip CVE-feed enrichment")
@@ -398,7 +459,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dry-run", action="store_true",
                     help="plan only; never execute")
     sp.add_argument("--pdf", help="write a PDF report after fixing")
+    sp.add_argument("--export-script", metavar="PATH",
+                    help="write a ready-to-run bash fix script (does not apply)")
+    sp.add_argument("--export-ansible", metavar="PATH",
+                    help="write an Ansible playbook of the fixes (does not apply)")
     sp.set_defaults(func=cmd_fix)
+
+    sp = sub.add_parser(
+        "rollback",
+        help="restore a previously-applied transactional fix from its backup")
+    sp.add_argument("id", nargs="?", help="finding id to roll back")
+    sp.add_argument("--list", action="store_true",
+                    help="list fixes that have a stored backup")
+    sp.set_defaults(func=cmd_rollback)
 
     sp = sub.add_parser("report", help="render a report from saved findings")
     sp.add_argument("-o", "--output", default="vulnscan-ai-report.pdf",

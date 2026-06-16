@@ -154,11 +154,42 @@ vulnscan-ai report -o latest.pdf
 # Stage the OpenSCAP OVAL feed for this distro, then scan with it
 vulnscan-ai update-oval
 vulnscan-ai scan --scanner dnf --scanner oscap --pdf report.pdf
+
+# Audit sshd hardening (root login, weak ciphers/MACs/KEX, ...)
+vulnscan-ai scan --scanner ssh
 ```
 
 PDF output always produces a real PDF: it uses `reportlab` if installed,
 otherwise a built-in dependency-free PDF writer. Use a `.html` extension to
 get an HTML report instead.
+
+### Safe fixes: transactional apply with auto-rollback
+
+When a fix touches a **config file or service** (e.g. an sshd hardening finding),
+`fix` applies it transactionally instead of blindly running commands:
+
+1. **Backup** the affected file(s) under `<state-dir>/backups/<id>/`.
+2. **Apply** the change.
+3. **Validate before restart** — e.g. `sshd -t` — so a broken config never reaches a restart.
+4. **Reload** the service (preferring `reload` over `restart`) and confirm it stays active.
+5. **Auto-rollback** — if *any* step fails, the backup is restored and the service brought back, so a bad sshd edit can't lock you out.
+
+```bash
+# AI proposes + applies, with the safety net above
+vulnscan-ai fix --scanner ssh --scan
+
+# Undo a fix later from its stored backup
+vulnscan-ai rollback --list
+vulnscan-ai rollback <finding-id>
+```
+
+Don't want to apply on the spot? Generate a reviewable artifact instead — a
+self-contained bash script (with the same backup/validate/rollback logic) or an
+Ansible playbook:
+
+```bash
+vulnscan-ai fix --export-script fix.sh --export-ansible fix.yml
+```
 
 ### Machine-readable export (ticketing / code scanning)
 
@@ -343,21 +374,25 @@ gracefully. It ships the CLI, systemd timer/service, `/etc/vulnscan-ai/config.js
 - Nothing runs without per-finding approval unless you pass `--yes`.
 - `--dry-run` records the full plan in the report without touching the system.
 - Fixes that require a reboot are flagged in the output and report.
+- Config/service fixes are **transactional**: backup → apply → validate before
+  restart → reload → **auto-rollback on failure**, so a bad edit can't strand a
+  service. Restore later with `rollback`.
 
 ## Layout
 
 ```
 vulnscanai/
-  cli.py            # argparse CLI: info/scan/fix/report/providers/update-oval
+  cli.py            # argparse CLI: info/scan/fix/rollback/report/providers/...
   config.py         # config file + env + flag precedence
   fips.py           # FIPS detection, approved hashing, hardened TLS context
   http.py           # stdlib HTTP over the hardened TLS context
   models.py         # Finding / Remediation dataclasses
-  remediation.py    # AI prompt, JSON parse, command screening, apply
+  remediation.py    # AI prompt, JSON parse, screening, transactional apply+rollback
+  export_fix.py     # render fixes as a bash script or Ansible playbook
   report.py         # block model + reportlab / native-PDF / HTML renderers
   pdfwriter.py      # dependency-free PDF writer (built-in fonts)
-  scanners/         # dnf+RHSA, OpenSCAP/OVAL, OVAL bootstrap, CVE enrichment
-  ai/               # claude (default), openai, gemini, kimi, local
+  scanners/         # dnf+RHSA, OpenSCAP/OVAL, sshd hardening, CVE enrichment
+  ai/               # claude (default), openai, gemini, kimi, deepseek, mistral, local
 ```
 
 ## Disclaimer

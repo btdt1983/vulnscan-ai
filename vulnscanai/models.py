@@ -38,8 +38,19 @@ class Remediation:
     confidence: float = 0.0        # 0.0 - 1.0
     provider: str = ""
     model: str = ""
+    # Transactional metadata (set by the model for config/service fixes). When
+    # any of these is present the applier runs in transactional mode: snapshot
+    # the files, apply, validate before restart, reload the service, and roll
+    # back automatically on failure.
+    backup_paths: List[str] = field(default_factory=list)
+    service: Optional[str] = None          # systemd unit to validate/reload
+    validate_cmd: Optional[str] = None     # config check run BEFORE (re)start
+    restart_mode: str = "none"             # reload | restart | none
+    rollback_commands: List[str] = field(default_factory=list)
     # Populated by the applier:
     applied: bool = False
+    rolled_back: bool = False
+    backup_dir: Optional[str] = None
     apply_results: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -73,14 +84,18 @@ class Finding:
     @property
     def id(self) -> str:
         """A stable identifier for de-duplication and caching."""
-        basis = "|".join(
-            [
-                self.source,
-                self.advisory or "",
-                ",".join(sorted(self.cve_ids)),
-                self.package or "",
-            ]
-        )
+        parts = [
+            self.source,
+            self.advisory or "",
+            ",".join(sorted(self.cve_ids)),
+            self.package or "",
+        ]
+        # Config/hardening findings (ssh, scap rules) carry no advisory, CVE or
+        # package, so fall back to the title to keep their ids distinct. Package
+        # findings always have one of the above, so their ids stay unchanged.
+        if not (self.advisory or self.cve_ids or self.package):
+            parts.append(self.title)
+        basis = "|".join(parts)
         digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
         return digest
 
