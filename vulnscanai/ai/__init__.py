@@ -6,9 +6,11 @@ from typing import Dict, Optional, Type
 
 from .base import AIProvider, ProviderError, extract_json
 from .claude import ClaudeProvider
+from .deepseek import DeepSeekProvider
 from .gemini import GeminiProvider
 from .kimi import KimiProvider
 from .local import LocalProvider
+from .mistral import MistralProvider
 from .openai import OpenAIProvider
 
 PROVIDERS: Dict[str, Type[AIProvider]] = {
@@ -16,6 +18,8 @@ PROVIDERS: Dict[str, Type[AIProvider]] = {
     OpenAIProvider.name: OpenAIProvider,
     GeminiProvider.name: GeminiProvider,
     KimiProvider.name: KimiProvider,
+    DeepSeekProvider.name: DeepSeekProvider,
+    MistralProvider.name: MistralProvider,
     LocalProvider.name: LocalProvider,
 }
 

@@ -60,10 +60,18 @@ export ANTHROPIC_API_KEY=sk-ant-...      # claude (default)
 export OPENAI_API_KEY=...                # openai
 export GEMINI_API_KEY=...                # gemini
 export MOONSHOT_API_KEY=...              # kimi
+export DEEPSEEK_API_KEY=...              # deepseek (DeepSeek-Coder)
+export MISTRAL_API_KEY=...               # mistral (Mixtral 8x7B)
 export OLLAMA_HOST=http://127.0.0.1:11434  # local (no key)
 export OLLAMA_MODEL=llama3.2:1b          # local model to use
 export NVD_API_KEY=...                   # optional, higher NVD rate limit
 ```
+
+DeepSeek and Mistral both speak the OpenAI Chat Completions API; override the
+endpoint with `DEEPSEEK_BASE_URL` / `MISTRAL_BASE_URL` and the model with
+`--model` (e.g. `deepseek-chat`, `mistral-large-latest`). **StarCoder 2** has no
+hosted API — run it offline through the `local` provider:
+`vulnscan-ai --provider local --model starcoder2 fix` (after `ollama pull starcoder2`).
 
 ### Fully offline / air-gapped (Ollama)
 

@@ -114,6 +114,27 @@ class TestExtractJson(unittest.TestCase):
         self.assertEqual(extract_json('text {"a": 2} trailing')["a"], 2)
 
 
+class TestProviders(unittest.TestCase):
+    def test_registry_includes_all(self):
+        from vulnscanai.ai import PROVIDERS, get_provider, ProviderError
+        for name in ("claude", "openai", "gemini", "kimi",
+                     "deepseek", "mistral", "local"):
+            self.assertIn(name, PROVIDERS)
+        with self.assertRaises(ProviderError):
+            get_provider("nope")
+
+    def test_deepseek_and_mistral_openai_compatible(self):
+        from vulnscanai.ai import get_provider
+        ds = get_provider("deepseek")
+        self.assertEqual(ds.default_model, "deepseek-coder")
+        self.assertEqual(ds.api_key_env, "DEEPSEEK_API_KEY")
+        self.assertTrue(ds.endpoint.endswith("/chat/completions"))
+        ms = get_provider("mistral")
+        self.assertEqual(ms.default_model, "open-mixtral-8x7b")
+        self.assertEqual(ms.api_key_env, "MISTRAL_API_KEY")
+        self.assertTrue(ms.endpoint.endswith("/chat/completions"))
+
+
 class TestPdf(unittest.TestCase):
     def test_valid_pdf_bytes(self):
         pdf = PdfBuilder()

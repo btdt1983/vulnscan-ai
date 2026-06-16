@@ -368,7 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
                    version=f"vulnscan-ai {__version__}")
     p.add_argument("--config", help="path to config JSON")
     p.add_argument("--state-dir", help="override state/cache directory")
-    p.add_argument("--provider", help="AI provider (claude|openai|gemini|kimi|local)")
+    p.add_argument("--provider",
+                   help="AI provider (claude|openai|gemini|kimi|deepseek|mistral|local)")
     p.add_argument("--model", help="model id override")
     sub = p.add_subparsers(dest="command", required=True)
 
