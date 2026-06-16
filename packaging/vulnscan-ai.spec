@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.6
+Version:        0.1.7
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.7-1
+- Transactional remediation: config/service fixes now back up the file(s),
+  validate before restart (e.g. sshd -t), reload + health-check the service,
+  and auto-roll back on failure. New 'rollback' command restores a fix.
+- Add SSH hardening scanner (--scanner ssh): root login, weak ciphers/MACs/
+  KEX, password auth, X11 forwarding, legacy protocol.
+- fix --export-script / --export-ansible: emit a bash script or Ansible
+  playbook instead of applying.
+
 * Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.6-1
 - Add DeepSeek (DeepSeek-Coder) and Mistral (Mixtral 8x7B) AI providers,
   both OpenAI-compatible. StarCoder 2 is supported via the local/Ollama
