@@ -158,6 +158,15 @@ for dist in "${!DISTS[@]}"; do
             echo "<li><a href=\"$pn\">$pn</a> <span style=color:#666>($sz)</span></li>"
         done
         echo "</ul>"
+        # Changelog straight from the package(s) so it always matches what is
+        # published. HTML-escape it (it contains <email> and other markup).
+        echo "<details><summary>Changelog</summary><pre>"
+        for pkg in "$REPO_ROOT/$dist/"*.rpm; do
+            [ -e "$pkg" ] || continue
+            rpm -qp --changelog "$pkg" 2>/dev/null \
+                | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+        done
+        echo "</pre></details>"
         echo "<p style=color:#666>Packages are GPG-signed; metadata is signed (repo_gpgcheck).</p>"
     } > "$REPO_ROOT/$dist/index.html"
 done
