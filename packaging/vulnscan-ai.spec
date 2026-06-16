@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.5
+Version:        0.1.6
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,12 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.6-1
+- Add DeepSeek (DeepSeek-Coder) and Mistral (Mixtral 8x7B) AI providers,
+  both OpenAI-compatible. StarCoder 2 is supported via the local/Ollama
+  provider (--provider local --model starcoder2).
+- repo: per-version index pages (el9/el10) listing downloadable packages.
+
 * Sun Jun 14 2026 vulnscan-ai <noreply@example.invalid> - 0.1.5-1
 - Add a man page (man vulnscan-ai) and bash + zsh shell completion.
 - Ship COMMANDS.md reference; point systemd Documentation= at the man page.
