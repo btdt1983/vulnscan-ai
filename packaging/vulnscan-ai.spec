@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.8
+Version:        0.1.9
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,13 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.9-1
+- Minimize false positives: OVAL scanner reports only patch-class
+  definitions (drops inventory/compliance) with real CVE ids + severity;
+  ports scanner suppresses firewalld-blocked ports; dnf+oscap findings
+  sharing an advisory/CVE are merged; new baseline/allowlist (config
+  'ignore', ~/.config/vulnscan-ai/ignore, VULNSCANAI_IGNORE, --ignore).
+
 * Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.8-1
 - Add systemd service-hardening scanner (--scanner systemd) via
   systemd-analyze security; conservative defaults, drop-in remediation.
