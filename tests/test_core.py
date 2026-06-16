@@ -17,6 +17,9 @@ from vulnscanai.pdfwriter import PdfBuilder
 from vulnscanai.remediation import apply, restore_backup, screen_command
 from vulnscanai.scanners.dnf_rhsa import parse_nevra, _CVE_LINE, _ADV_LINE
 from vulnscanai.scanners.ssh_config import audit_sshd_config, parse_sshd_config
+from vulnscanai.scanners.systemd_security import (
+    audit_units, parse_security_overview, parse_unit_detail,
+)
 
 
 def _finding(**kw):
@@ -202,6 +205,29 @@ class TestTransactionalApply(unittest.TestCase):
             self.assertEqual(open(target).read().strip(), "ORIGINAL")
             self.assertTrue(f.remediation.rolled_back)
 
+    def test_rollback_runs_daemon_reload_before_restart(self):
+        # systemd drop-ins only take effect after daemon-reload; the rollback
+        # must reload before restarting. Uses a guaranteed-nonexistent unit so
+        # no real service is touched (the systemctl calls fail harmlessly).
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "dropin.conf")
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write("[Service]\n")
+            f = _finding(source="systemd", package=None, cve_ids=[], title="svc")
+            f.remediation = Remediation(
+                backup_paths=[target], commands=[],
+                validate_cmd="false",  # force rollback
+                service="vulnscanai-nonexistent-test.service",
+                restart_mode="restart")
+            apply(f, dry_run=False, state_dir=tmp)
+            cmds = [r["command"] for r in f.remediation.apply_results]
+            restart = "systemctl restart vulnscanai-nonexistent-test.service"
+            self.assertIn("systemctl daemon-reload", cmds)
+            self.assertIn(restart, cmds)
+            self.assertLess(cmds.index("systemctl daemon-reload"),
+                            cmds.index(restart))
+            self.assertTrue(f.remediation.rolled_back)
+
 
 class TestSshScanner(unittest.TestCase):
     def test_parse_and_audit(self):
@@ -225,6 +251,55 @@ class TestSshScanner(unittest.TestCase):
             "PermitRootLogin no\nCiphers aes256-gcm@openssh.com\n"
             "MACs hmac-sha2-256-etm@openssh.com\n")
         self.assertEqual(audit_sshd_config(cfg), [])
+
+
+class TestSystemdScanner(unittest.TestCase):
+    OVERVIEW = (
+        "UNIT                  EXPOSURE PREDICATE HAPPY\n"
+        "crond.service              9.6 UNSAFE    X\n"
+        "getty@tty1.service         9.6 UNSAFE    X\n"
+        "chronyd.service            3.9 OK        S\n"
+        "abyssfps.service           5.8 MEDIUM    N\n"
+        "myapp.service              9.2 UNSAFE    X\n"
+        "systemd-journald.service   9.5 UNSAFE    X\n"
+    )
+
+    def test_parse_overview(self):
+        rows = parse_security_overview(self.OVERVIEW)
+        units = {u for u, _, _ in rows}
+        self.assertIn("crond.service", units)
+        self.assertNotIn("UNIT", units)  # header skipped
+        preds = {u: p for u, _, p in rows}
+        self.assertEqual(preds["chronyd.service"], "OK")
+
+    def test_audit_policy(self):
+        rows = parse_security_overview(self.OVERVIEW)
+        findings = audit_units(rows, relevant=lambda u: True, min_exposure=9.0)
+        units = {f.raw["unit"] for f in findings}
+        self.assertEqual(units, {"crond.service", "myapp.service"})
+        # excluded: getty@ (skip-list), chronyd (OK), abyssfps (MEDIUM),
+        # systemd-journald (skip-list)
+        for f in findings:
+            self.assertEqual(f.source, "systemd")
+            self.assertEqual(f.severity, "moderate")
+            self.assertTrue(f.raw["dropin"].endswith("10-hardening.conf"))
+
+    def test_audit_relevant_filter(self):
+        rows = parse_security_overview(self.OVERVIEW)
+        findings = audit_units(rows, relevant=lambda u: u == "myapp.service",
+                               min_exposure=9.0)
+        self.assertEqual({f.raw["unit"] for f in findings}, {"myapp.service"})
+
+    def test_parse_unit_detail(self):
+        detail = (
+            "  NAME              DESCRIPTION            EXPOSURE\n"
+            "✗ NoNewPrivileges=  may acquire new privileges  0.2\n"
+            "✓ AmbientCapabilities=  does not receive caps\n"
+            "✗ PrivateDevices=   has access to hardware devices  0.4\n"
+        )
+        items = parse_unit_detail(detail)
+        self.assertEqual(len(items), 2)            # only the two scored ✗ lines
+        self.assertIn("hardware devices", items[0])  # 0.4 sorts before 0.2
 
 
 class TestFixExport(unittest.TestCase):

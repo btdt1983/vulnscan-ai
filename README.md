@@ -157,7 +157,16 @@ vulnscan-ai scan --scanner dnf --scanner oscap --pdf report.pdf
 
 # Audit sshd hardening (root login, weak ciphers/MACs/KEX, ...)
 vulnscan-ai scan --scanner ssh
+
+# Audit systemd service sandboxing (systemd-analyze security)
+vulnscan-ai scan --scanner systemd
 ```
+
+The `systemd` scanner is conservative by default (only `UNSAFE`, enabled
+services, exposure ≥ 9.0, skipping un-hardenable units); widen or narrow it with
+`VULNSCANAI_SYSTEMD_MIN_EXPOSURE`. Its fixes are systemd drop-ins applied through
+the same transactional engine (`daemon-reload` → `systemd-analyze verify` →
+restart → rollback).
 
 PDF output always produces a real PDF: it uses `reportlab` if installed,
 otherwise a built-in dependency-free PDF writer. Use a `.html` extension to
@@ -391,7 +400,7 @@ vulnscanai/
   export_fix.py     # render fixes as a bash script or Ansible playbook
   report.py         # block model + reportlab / native-PDF / HTML renderers
   pdfwriter.py      # dependency-free PDF writer (built-in fonts)
-  scanners/         # dnf+RHSA, OpenSCAP/OVAL, sshd hardening, CVE enrichment
+  scanners/         # dnf+RHSA, OpenSCAP/OVAL, sshd + systemd hardening, CVE enrich
   ai/               # claude (default), openai, gemini, kimi, deepseek, mistral, local
 ```
 

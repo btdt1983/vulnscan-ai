@@ -40,6 +40,13 @@ file(s) you change so they can be snapshotted and rolled back. Provide a \
 `nginx -t`, `visudo -cf <file>`), and set "service" + "restart_mode" to apply it. \
 PREFER "reload" over "restart" to avoid dropping live connections. For sshd \
 always use validate_cmd `sshd -t`, service `sshd`, restart_mode `reload`.
+- For a systemd service hardening finding, create a drop-in at \
+`/etc/systemd/system/<unit>.d/10-hardening.conf` (the path is given as `dropin`). \
+Set "backup_paths" to that file, make `systemctl daemon-reload` the LAST command \
+after writing it, set "validate_cmd" to `systemd-analyze verify <unit>`, "service" \
+to the unit, "restart_mode" to `restart`, and add `systemctl daemon-reload` to \
+"rollback_commands". Apply only conservative directives that will not break the \
+service.
 
 Respond with ONLY a JSON object, no prose, with this schema:
 {
@@ -98,6 +105,13 @@ def _finding_brief(f: Finding) -> str:
         "Description:",
         (f.description or "n/a")[:2000],
     ]
+    # Surface scanner hints (e.g. systemd drop-in path, recommended directives)
+    # so the model can produce a precise transactional plan.
+    for key in ("dropin", "recommended", "config_file", "directive",
+                "current"):
+        val = f.raw.get(key) if isinstance(f.raw, dict) else None
+        if val:
+            lines.append(f"{key}: {val}")
     return "\n".join(lines)
 
 
@@ -315,8 +329,10 @@ def _apply_transactional(finding: Finding, dry_run: bool,
         for rc in rem.rollback_commands:
             if not screen_command(rc):
                 results.append(_run(rc))
-        # Revert runtime state from the restored config.
+        # Revert runtime state from the restored config. daemon-reload first so
+        # a removed/restored unit drop-in actually takes effect before restart.
         if rem.service and rem.restart_mode in ("reload", "restart"):
+            results.append(_run("systemctl daemon-reload"))
             results.append(_systemctl(rem.restart_mode, rem.service))
         rem.applied = False
         rem.rolled_back = True
@@ -369,6 +385,7 @@ def restore_backup(finding: Finding) -> bool:
         return False
     rem.apply_results = _restore(rem.backup_dir)
     if rem.service and rem.restart_mode in ("reload", "restart"):
+        rem.apply_results.append(_run("systemctl daemon-reload"))
         rem.apply_results.append(_systemctl(rem.restart_mode, rem.service))
     rem.rolled_back = True
     rem.applied = False

@@ -75,7 +75,15 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing). Default: from config (`dnf`). |
+
+> **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
+> default: only `UNSAFE` units at/above exposure `9.0`, excluding un-hardenable/
+> internal units (getty, emergency, `systemd-*`, …) and units that aren't
+> enabled/active. Tune the floor with `VULNSCANAI_SYSTEMD_MIN_EXPOSURE` (e.g.
+> `9.6` for only the worst, `0` for all UNSAFE). Fixes are systemd drop-ins
+> applied transactionally (backup → write → `daemon-reload` → `systemd-analyze
+> verify` → restart → rollback).
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |

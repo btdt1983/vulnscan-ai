@@ -49,16 +49,18 @@ def _print_findings(findings: List[Finding]) -> None:
         return
     findings = sorted(findings, key=lambda f: (-severity_rank(f.severity),
                                                -(f.cvss_score or 0)))
-    print(f"{'SEV':<5} {'CVSS':<5} {'PACKAGE':<28} {'ADVISORY':<18} CVEs")
-    print("-" * 78)
+    print(f"{'SEV':<5} {'CVSS':<5} {'PACKAGE / ISSUE':<45} {'ADVISORY':<14} CVEs")
+    print("-" * 90)
     for f in findings:
         tag = _SEV_TAG.get(f.severity.lower(), "UNK")
         cvss = f"{f.cvss_score:.1f}" if f.cvss_score is not None else "-"
-        pkg = (f.package or "-")[:27]
-        adv = (f.advisory or "-")[:17]
+        # Package findings show the package; config findings (ssh, systemd, ...)
+        # have no package, so fall back to the title.
+        subject = (f.package or f.title or "-")[:44]
+        adv = (f.advisory or "-")[:13]
         cves = ", ".join(f.cve_ids[:3]) + ("…" if len(f.cve_ids) > 3 else "")
-        print(f"{tag:<5} {cvss:<5} {pkg:<28} {adv:<18} {cves}")
-    print("-" * 78)
+        print(f"{tag:<5} {cvss:<5} {subject:<45} {adv:<14} {cves}")
+    print("-" * 90)
     print(f"{len(findings)} finding(s).")
 
 
@@ -439,7 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("scan", help="scan for vulnerabilities")
     sp.add_argument("--scanner", action="append",
-                    help="scanner to run (repeatable): dnf, oscap, ssh")
+                    help="scanner to run (repeatable): dnf, oscap, ssh, systemd")
     sp.add_argument("--min-severity", help="floor: low|moderate|important|critical")
     sp.add_argument("--no-enrich", action="store_true",
                     help="skip CVE-feed enrichment")
