@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.7
+Version:        0.1.8
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,14 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.8-1
+- Add systemd service-hardening scanner (--scanner systemd) via
+  systemd-analyze security; conservative defaults, drop-in remediation.
+- Add network exposure scanner (--scanner ports) via ss; flags risky
+  plaintext/legacy and sensitive services listening off-host.
+- Transactional rollback now runs systemctl daemon-reload before restart.
+- Readable scan output for config findings (show title when no package).
+
 * Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.7-1
 - Transactional remediation: config/service fixes now back up the file(s),
   validate before restart (e.g. sshd -t), reload + health-check the service,
