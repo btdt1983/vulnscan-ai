@@ -47,6 +47,11 @@ after writing it, set "validate_cmd" to `systemd-analyze verify <unit>`, "servic
 to the unit, "restart_mode" to `restart`, and add `systemctl daemon-reload` to \
 "rollback_commands". Apply only conservative directives that will not break the \
 service.
+- For an exposed-port finding, prefer the least-disruptive fix: bind the service \
+to localhost in its own config (transactional: backup the config, validate, \
+reload), otherwise restrict the port with the firewall (`firewall-cmd`), \
+otherwise stop+disable the service if it is unused. Never block the SSH port you \
+are connected through.
 
 Respond with ONLY a JSON object, no prose, with this schema:
 {
@@ -108,7 +113,7 @@ def _finding_brief(f: Finding) -> str:
     # Surface scanner hints (e.g. systemd drop-in path, recommended directives)
     # so the model can produce a precise transactional plan.
     for key in ("dropin", "recommended", "config_file", "directive",
-                "current"):
+                "current", "service", "address", "port", "category"):
         val = f.raw.get(key) if isinstance(f.raw, dict) else None
         if val:
             lines.append(f"{key}: {val}")

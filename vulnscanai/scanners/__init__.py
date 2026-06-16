@@ -9,6 +9,7 @@ from .dnf_rhsa import DnfRhsaScanner
 from .nvd import NvdEnricher
 from .openscap import OpenScapScanner
 from .oval import detect_distro, download_oval
+from .ports import PortScanner
 from .ssh_config import SshConfigScanner
 from .systemd_security import SystemdSecurityScanner
 
@@ -18,10 +19,11 @@ SCANNERS: Dict[str, Type[Scanner]] = {
     OpenScapScanner.name: OpenScapScanner,
     SshConfigScanner.name: SshConfigScanner,
     SystemdSecurityScanner.name: SystemdSecurityScanner,
+    PortScanner.name: PortScanner,
 }
 
 __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
-    "SystemdSecurityScanner", "NvdEnricher", "SCANNERS", "download_oval",
-    "detect_distro",
+    "SystemdSecurityScanner", "PortScanner", "NvdEnricher", "SCANNERS",
+    "download_oval", "detect_distro",
 ]

@@ -75,7 +75,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure). Default: from config (`dnf`). |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
 > default: only `UNSAFE` units at/above exposure `9.0`, excluding un-hardenable/
@@ -84,6 +84,14 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > `9.6` for only the worst, `0` for all UNSAFE). Fixes are systemd drop-ins
 > applied transactionally (backup → write → `daemon-reload` → `systemd-analyze
 > verify` → restart → rollback).
+
+> **`ports` scanner.** Wraps `ss -tulpn`. Conservative: flags only sockets on a
+> non-loopback address that are a plaintext/legacy protocol (telnet, ftp, tftp,
+> rsh, vnc, X11, …) or a sensitive service that should not face the network
+> (mysql, postgresql, redis, mongodb, memcached, elasticsearch, …). Expected
+> public services (HTTP/HTTPS/SSH) are not flagged. The AI picks the fix
+> (bind-to-localhost, firewall rule, or disable), transactional when it touches a
+> config/service.
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |

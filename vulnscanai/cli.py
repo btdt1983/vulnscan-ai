@@ -441,7 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("scan", help="scan for vulnerabilities")
     sp.add_argument("--scanner", action="append",
-                    help="scanner to run (repeatable): dnf, oscap, ssh, systemd")
+                    help="scanner to run (repeatable): dnf, oscap, ssh, systemd, ports")
     sp.add_argument("--min-severity", help="floor: low|moderate|important|critical")
     sp.add_argument("--no-enrich", action="store_true",
                     help="skip CVE-feed enrichment")

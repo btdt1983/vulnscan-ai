@@ -160,6 +160,9 @@ vulnscan-ai scan --scanner ssh
 
 # Audit systemd service sandboxing (systemd-analyze security)
 vulnscan-ai scan --scanner systemd
+
+# Audit network exposure (risky listening ports via ss)
+vulnscan-ai scan --scanner ports
 ```
 
 The `systemd` scanner is conservative by default (only `UNSAFE`, enabled
@@ -400,7 +403,7 @@ vulnscanai/
   export_fix.py     # render fixes as a bash script or Ansible playbook
   report.py         # block model + reportlab / native-PDF / HTML renderers
   pdfwriter.py      # dependency-free PDF writer (built-in fonts)
-  scanners/         # dnf+RHSA, OpenSCAP/OVAL, sshd + systemd hardening, CVE enrich
+  scanners/         # dnf+RHSA, OpenSCAP/OVAL, sshd/systemd/ports hardening, CVE enrich
   ai/               # claude (default), openai, gemini, kimi, deepseek, mistral, local
 ```
 

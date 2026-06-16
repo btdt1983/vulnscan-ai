@@ -20,6 +20,7 @@ from vulnscanai.scanners.ssh_config import audit_sshd_config, parse_sshd_config
 from vulnscanai.scanners.systemd_security import (
     audit_units, parse_security_overview, parse_unit_detail,
 )
+from vulnscanai.scanners.ports import audit_ports, classify, parse_ss
 
 
 def _finding(**kw):
@@ -300,6 +301,48 @@ class TestSystemdScanner(unittest.TestCase):
         items = parse_unit_detail(detail)
         self.assertEqual(len(items), 2)            # only the two scored ✗ lines
         self.assertIn("hardware devices", items[0])  # 0.4 sorts before 0.2
+
+
+class TestPortScanner(unittest.TestCase):
+    SS = (
+        "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+        'tcp   LISTEN 0      128    0.0.0.0:23         0.0.0.0:*  users:(("telnetd",pid=1,fd=3))\n'
+        'tcp   LISTEN 0      128    0.0.0.0:3306       0.0.0.0:*  users:(("mariadbd",pid=2,fd=4))\n'
+        'tcp   LISTEN 0      128    127.0.0.1:6379     0.0.0.0:*  users:(("redis",pid=3,fd=5))\n'
+        'tcp   LISTEN 0      511    0.0.0.0:443        0.0.0.0:*  users:(("nginx",pid=4,fd=6))\n'
+        'tcp   LISTEN 0      128    [::]:3306          [::]:*     users:(("mariadbd",pid=2,fd=7))\n'
+    )
+
+    def test_classify(self):
+        self.assertEqual(classify(23)[0], "plaintext")
+        self.assertEqual(classify(3306)[0], "sensitive")
+        self.assertEqual(classify(5901)[2], "vnc")
+        self.assertEqual(classify(6005)[2], "x11")
+        self.assertIsNone(classify(443))
+        self.assertIsNone(classify(22))
+
+    def test_parse_ss(self):
+        socks = parse_ss(self.SS)
+        ports = {s["port"] for s in socks}
+        self.assertEqual(ports, {23, 3306, 6379, 443})  # header skipped
+        telnet = next(s for s in socks if s["port"] == 23)
+        self.assertEqual(telnet["process"], "telnetd")
+
+    def test_audit_policy(self):
+        findings = audit_ports(parse_ss(self.SS))
+        cats = {(f.raw["service"], f.raw["category"]) for f in findings}
+        # telnet (plaintext) and mariadb (sensitive) flagged; redis is loopback,
+        # nginx/443 is expected-public -> not flagged; IPv4+IPv6 mariadb collapse.
+        self.assertEqual(cats, {("telnet", "plaintext"),
+                                ("mysql/mariadb", "sensitive")})
+        for f in findings:
+            self.assertEqual(f.source, "ports")
+            self.assertEqual(f.severity, "important")
+
+    def test_loopback_and_public_not_flagged(self):
+        ss = ('tcp LISTEN 0 128 127.0.0.1:3306 0.0.0.0:* users:(("db",pid=1,fd=3))\n'
+              'tcp LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=2,fd=4))\n')
+        self.assertEqual(audit_ports(parse_ss(ss)), [])
 
 
 class TestFixExport(unittest.TestCase):
