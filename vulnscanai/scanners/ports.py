@@ -6,6 +6,10 @@ that are either a plaintext/legacy protocol (telnet, ftp, vnc, X11, ...) or a
 sensitive service that should not face the network (databases/caches). Expected
 public services (HTTP/HTTPS/SSH) are not flagged generically.
 
+A port the host firewall already blocks isn't a real exposure, so findings are
+suppressed when firewalld (authoritative when running) or, as a fallback, raw
+nftables can confidently prove the port unreachable from off-host.
+
 Remediation is service-dependent (bind to localhost, a firewall rule, or disable
 the service), so the AI picks the appropriate fix; when it touches a config or
 service it runs through the transactional engine.
@@ -13,12 +17,16 @@ service it runs through the transactional engine.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from ..models import Finding
 from .base import Scanner, have, run
+
+# A port matcher: (proto, lo, hi). proto is "tcp"/"udp", or None for both.
+Matcher = Tuple[Optional[str], int, int]
 
 # Minimal firewalld service -> "port/proto" map for the common cases that show
 # up as listeners; explicit --list-ports covers everything else.
@@ -113,6 +121,146 @@ def firewall_allowed_ports() -> Optional[Set[str]]:
     return allowed
 
 
+# --------------------------------------------------------------------------- #
+# nftables (raw, no firewalld) firewall awareness
+# --------------------------------------------------------------------------- #
+def _matches(matchers: List[Matcher], proto: str, port: int) -> bool:
+    return any((m[0] is None or m[0] == proto) and m[1] <= port <= m[2]
+               for m in matchers)
+
+
+def _expr_dports(right, proto: Optional[str],
+                 named: Dict[str, List[Tuple[int, int]]]) -> List[Matcher]:
+    """Turn an nft match right-hand side into port matchers."""
+    out: List[Matcher] = []
+    if isinstance(right, int):
+        out.append((proto, right, right))
+    elif isinstance(right, str):
+        if right.startswith("@"):                       # named set reference
+            for lo, hi in named.get(right[1:], []):
+                out.append((proto, lo, hi))
+        else:
+            try:
+                p = int(right)
+                out.append((proto, p, p))
+            except ValueError:
+                pass
+    elif isinstance(right, dict):
+        if "range" in right and isinstance(right["range"], list):
+            lo, hi = right["range"][0], right["range"][1]
+            out.append((proto, int(lo), int(hi)))
+        elif "set" in right and isinstance(right["set"], list):
+            for elem in right["set"]:
+                out.extend(_expr_dports(elem, proto, named))
+    return out
+
+
+def _named_sets(ruleset: List[dict]) -> Dict[str, List[Tuple[int, int]]]:
+    """Collect named-set port ranges keyed by set name."""
+    named: Dict[str, List[Tuple[int, int]]] = {}
+    for item in ruleset:
+        s = item.get("set") if isinstance(item, dict) else None
+        if not s or "name" not in s:
+            continue
+        ranges: List[Tuple[int, int]] = []
+        for elem in s.get("elem", []) or []:
+            if isinstance(elem, int):
+                ranges.append((elem, elem))
+            elif isinstance(elem, dict) and "range" in elem:
+                r = elem["range"]
+                ranges.append((int(r[0]), int(r[1])))
+        named[s["name"]] = ranges
+    return named
+
+
+def parse_nft_ruleset(obj: dict) -> Tuple[List[Matcher], List[Matcher], bool]:
+    """Parse `nft --json list ruleset` into (accept, drop, default_deny).
+
+    accept/drop are port matchers; default_deny is True when an input-hook
+    chain has a drop policy. Best-effort and deliberately conservative: it only
+    feeds the "blocked" decision, and unmatched ports stay reachable.
+    """
+    ruleset = obj.get("nftables", []) if isinstance(obj, dict) else []
+    named = _named_sets(ruleset)
+    accept: List[Matcher] = []
+    drop: List[Matcher] = []
+    default_deny = False
+
+    for item in ruleset:
+        if not isinstance(item, dict):
+            continue
+        chain = item.get("chain")
+        if chain and chain.get("hook") == "input" and chain.get("policy") == "drop":
+            default_deny = True
+        rule = item.get("rule")
+        if not rule:
+            continue
+        exprs = rule.get("expr", []) or []
+        verb = None
+        dports: List[Matcher] = []
+        for e in exprs:
+            if not isinstance(e, dict):
+                continue
+            if "match" in e:
+                m = e["match"]
+                left = m.get("left", {})
+                payload = left.get("payload") if isinstance(left, dict) else None
+                if payload and payload.get("field") == "dport":
+                    proto = payload.get("protocol")
+                    proto = proto if proto in ("tcp", "udp") else None
+                    dports.extend(_expr_dports(m.get("right"), proto, named))
+            elif "accept" in e:
+                verb = "accept"
+            elif "drop" in e or "reject" in e:
+                verb = "drop"
+        if not dports:
+            continue
+        if verb == "accept":
+            accept.extend(dports)
+        elif verb == "drop":
+            drop.extend(dports)
+    return accept, drop, default_deny
+
+
+def matchers_to_predicate(accept: List[Matcher], drop: List[Matcher],
+                          default_deny: bool) -> Callable[[str, int], Optional[bool]]:
+    """Wrap parsed nftables matchers into an `allowed(proto, port)` predicate."""
+    def allowed(proto: str, port: int) -> Optional[bool]:
+        if _matches(accept, proto, port):
+            return True               # explicitly reachable
+        if _matches(drop, proto, port):
+            return False              # explicitly blocked
+        if default_deny:
+            return False              # default-deny and no accept matched
+        return None
+    return allowed
+
+
+def nft_predicate() -> Optional[Callable[[str, int], Optional[bool]]]:
+    """Build a firewall predicate from raw nftables, or None if unusable.
+
+    The fallback for hosts without firewalld. Returns None (rather than a
+    permissive predicate) when nothing can be confidently called "blocked", so
+    a parse miss never hides a real exposure.
+    """
+    if not have("nft"):
+        return None
+    try:
+        rc, out, _ = run(["nft", "--json", "list", "ruleset"], timeout=10)
+    except Exception:  # noqa: BLE001
+        return None
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        obj = json.loads(out)
+    except (ValueError, TypeError):
+        return None
+    accept, drop, default_deny = parse_nft_ruleset(obj)
+    if not (default_deny or drop):
+        return None  # nothing we can confidently call "blocked"
+    return matchers_to_predicate(accept, drop, default_deny)
+
+
 def audit_ports(sockets: List[Dict[str, object]], *,
                 allowed: Callable[[str, int], Optional[bool]] =
                 lambda _proto, _port: None) -> List[Finding]:
@@ -172,12 +320,15 @@ class PortScanner(Scanner):
             return []
         sockets = parse_ss(out)
         fw = firewall_allowed_ports()
-        if fw is None:
+        if fw is not None:
+            pred, backend = (lambda proto, port: f"{port}/{proto}" in fw), "firewalld"
+        else:
+            pred, backend = nft_predicate(), "nftables"
+        if pred is None:
             return audit_ports(sockets)
-        pred = (lambda proto, port: f"{port}/{proto}" in fw)
         findings = audit_ports(sockets, allowed=pred)
         suppressed = len(audit_ports(sockets)) - len(findings)
         if suppressed:
             print(f"    ports: {suppressed} exposure(s) suppressed "
-                  f"(blocked by firewalld)", file=sys.stderr)
+                  f"(blocked by {backend})", file=sys.stderr)
         return findings

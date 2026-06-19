@@ -178,8 +178,13 @@ The scanners are built to avoid noise:
 - **OVAL (`oscap`)** reports only real *patch* advisories — `inventory`/compliance
   definitions (e.g. "the OS is installed") are dropped — with proper CVE ids and
   severities pulled from the feed metadata.
-- **`ports`** suppresses ports that **firewalld** blocks (a socket on `0.0.0.0`
-  isn't an exposure if the firewall drops it).
+- **`ports`** suppresses ports the host firewall blocks (a socket on `0.0.0.0`
+  isn't an exposure if the firewall drops it). It reads **firewalld** when
+  running and falls back to raw **nftables** (`nft --json list ruleset`) on
+  hosts without it — honouring a default-deny `input` policy, accept rules
+  (single port, named sets, ranges) and explicit drop/reject rules. It only
+  suppresses a port it can confidently prove blocked, so a parse miss never
+  hides a real exposure.
 - Findings that **`dnf` and `oscap` both report** (same advisory/CVE) are merged
   into one.
 - **Vendor fix state** (during enrichment): Red Hat publishes, per CVE and per

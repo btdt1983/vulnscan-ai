@@ -25,7 +25,9 @@ from vulnscanai.scanners.ssh_config import audit_sshd_config, parse_sshd_config
 from vulnscanai.scanners.systemd_security import (
     audit_units, parse_security_overview, parse_unit_detail,
 )
-from vulnscanai.scanners.ports import audit_ports, classify, parse_ss
+from vulnscanai.scanners.ports import (
+    audit_ports, classify, matchers_to_predicate, parse_nft_ruleset, parse_ss,
+)
 
 
 def _finding(**kw):
@@ -356,6 +358,75 @@ class TestPortScanner(unittest.TestCase):
             allowed=lambda proto, port: False if port == 3306 else None)
         services = {f.raw["service"] for f in findings}
         self.assertEqual(services, {"telnet"})
+
+
+class TestNftablesFirewall(unittest.TestCase):
+    # inet/filter, input default-deny, with single port, named set, range and
+    # an explicit drop rule.
+    RULESET = {"nftables": [
+        {"metainfo": {"version": "1.0.4"}},
+        {"table": {"family": "inet", "name": "filter"}},
+        {"set": {"family": "inet", "table": "filter", "name": "webports",
+                 "type": "inet_service", "elem": [80, 443]}},
+        {"chain": {"family": "inet", "table": "filter", "name": "input",
+                   "type": "filter", "hook": "input", "policy": "drop"}},
+        {"rule": {"chain": "input", "expr": [
+            {"match": {"op": "==",
+                       "left": {"payload": {"protocol": "tcp", "field": "dport"}},
+                       "right": 22}}, {"accept": None}]}},
+        {"rule": {"chain": "input", "expr": [
+            {"match": {"op": "==",
+                       "left": {"payload": {"protocol": "tcp", "field": "dport"}},
+                       "right": "@webports"}}, {"accept": None}]}},
+        {"rule": {"chain": "input", "expr": [
+            {"match": {"op": "==",
+                       "left": {"payload": {"protocol": "udp", "field": "dport"}},
+                       "right": {"range": [30000, 30010]}}}, {"accept": None}]}},
+        {"rule": {"chain": "input", "expr": [
+            {"match": {"op": "==",
+                       "left": {"payload": {"protocol": "tcp", "field": "dport"}},
+                       "right": 6379}}, {"drop": None}]}},
+    ]}
+
+    def test_parse_and_predicate(self):
+        accept, drop, deny = parse_nft_ruleset(self.RULESET)
+        self.assertTrue(deny)
+        allowed = matchers_to_predicate(accept, drop, deny)
+        self.assertTrue(allowed("tcp", 22))            # explicit accept
+        self.assertTrue(allowed("tcp", 80))            # named set
+        self.assertTrue(allowed("tcp", 443))           # named set
+        self.assertTrue(allowed("udp", 30005))         # range
+        self.assertFalse(allowed("tcp", 6379))         # explicit drop
+        self.assertFalse(allowed("tcp", 3306))         # default-deny, no accept
+        self.assertFalse(allowed("udp", 53))           # default-deny
+        # proto matters: 80 was accepted for tcp, not udp.
+        self.assertFalse(allowed("udp", 80))
+
+    def test_drop_rule_without_default_deny(self):
+        # No input drop policy: only the explicit drop is "blocked"; the rest
+        # is unknown (None) so findings are kept.
+        rs = {"nftables": [
+            {"chain": {"name": "input", "hook": "input", "policy": "accept"}},
+            {"rule": {"chain": "input", "expr": [
+                {"match": {"op": "==",
+                           "left": {"payload": {"protocol": "tcp",
+                                                "field": "dport"}},
+                           "right": 23}}, {"drop": None}]}},
+        ]}
+        accept, drop, deny = parse_nft_ruleset(rs)
+        self.assertFalse(deny)
+        allowed = matchers_to_predicate(accept, drop, deny)
+        self.assertFalse(allowed("tcp", 23))           # explicit drop
+        self.assertIsNone(allowed("tcp", 3306))        # unknown -> keep finding
+
+    def test_blocked_port_suppressed_end_to_end(self):
+        # mariadb (3306) is default-denied -> dropped; telnet (23) has no rule
+        # but default-deny blocks it too, so only services with an accept stay.
+        accept, drop, deny = parse_nft_ruleset(self.RULESET)
+        allowed = matchers_to_predicate(accept, drop, deny)
+        findings = audit_ports(parse_ss(TestPortScanner.SS), allowed=allowed)
+        # Everything sensitive/plaintext in SS is default-denied -> none kept.
+        self.assertEqual(findings, [])
 
 
 _OVAL_DEFS = """<?xml version="1.0"?>
