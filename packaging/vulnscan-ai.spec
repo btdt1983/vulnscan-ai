@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.9
+Version:        0.1.10
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,17 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Fri Jun 19 2026 vulnscan-ai <noreply@example.invalid> - 0.1.10-1
+- Fewer false positives via Red Hat per-CVE package_state: findings the
+  vendor marks "Not affected" for this RHEL release are dropped; the
+  won't-fix family ("Will not fix"/"Out of support scope"/"Fix deferred")
+  is kept but annotated so no pointless dnf update is proposed (toggle
+  with config 'vendor_state_filter').
+- ports scanner gains nftables firewall-awareness: when firewalld isn't
+  running it parses 'nft --json list ruleset' (default-deny input policy,
+  accept rules incl. named sets/ranges, explicit drop/reject) and only
+  suppresses ports it can confidently prove blocked.
+
 * Tue Jun 16 2026 vulnscan-ai <noreply@example.invalid> - 0.1.9-1
 - Minimize false positives: OVAL scanner reports only patch-class
   definitions (drops inventory/compliance) with real CVE ids + severity;
