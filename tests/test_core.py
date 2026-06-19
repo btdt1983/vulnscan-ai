@@ -10,8 +10,12 @@ import unittest
 from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 from vulnscanai.models import (
-    Finding, Remediation, apply_ignores, dedup_cross_scanner, findings_from_json,
-    findings_to_json, match_ignore, merge_findings, severity_rank,
+    Finding, Remediation, apply_ignores, apply_vendor_states,
+    dedup_cross_scanner, findings_from_json, findings_to_json, match_ignore,
+    merge_findings, severity_rank,
+)
+from vulnscanai.scanners.nvd import (
+    NvdEnricher, _cpe_major, _package_matches, select_package_state,
 )
 from vulnscanai.scanners.openscap import OpenScapScanner, parse_oval_definitions
 from vulnscanai.pdfwriter import PdfBuilder
@@ -456,6 +460,54 @@ class TestBaseline(unittest.TestCase):
         self.assertEqual(sup, 0)
         self.assertTrue(match_ignore(f1, [f1.id]))           # by id
         self.assertTrue(match_ignore(_finding(title="weak sshd"), ["weak*"]))
+
+
+class TestVendorState(unittest.TestCase):
+    def test_cpe_major_and_package_match(self):
+        self.assertEqual(_cpe_major("cpe:/o:redhat:enterprise_linux:9"), "9")
+        self.assertEqual(_cpe_major("cpe:/a:redhat:enterprise_linux:9::appstream"), "9")
+        self.assertEqual(_cpe_major("cpe:/o:redhat:enterprise_linux:10"), "10")
+        self.assertIsNone(_cpe_major("cpe:/o:redhat:openshift:4"))
+        self.assertTrue(_package_matches("openssl", "openssl"))
+        self.assertTrue(_package_matches("openssl", "openssl-libs"))  # subpackage
+        self.assertFalse(_package_matches("openssl", "libssl"))
+        self.assertFalse(_package_matches("ssl", "openssl"))          # not reverse
+
+    def test_select_picks_most_affected(self):
+        ps = [
+            {"cpe": "cpe:/o:redhat:enterprise_linux:9", "package_name": "kernel",
+             "fix_state": "Not affected"},
+            {"cpe": "cpe:/a:redhat:enterprise_linux:9::appstream",
+             "package_name": "kernel", "fix_state": "Affected"},
+            {"cpe": "cpe:/o:redhat:enterprise_linux:8", "package_name": "kernel",
+             "fix_state": "Will not fix"},
+        ]
+        # On 9 both not-affected and affected match -> keep the affected verdict.
+        self.assertEqual(select_package_state(ps, "9", "kernel"), "affected")
+        # On 8 only the won't-fix entry matches.
+        self.assertEqual(select_package_state(ps, "8", "kernel"), "will not fix")
+        # No entry for the package / no major -> None.
+        self.assertIsNone(select_package_state(ps, "9", "bash"))
+        self.assertIsNone(select_package_state(ps, None, "kernel"))
+
+    def test_apply_vendor_states_drops_only_not_affected(self):
+        a = _finding(package="kernel", vendor_fix_state="not affected")
+        b = _finding(package="openssl", vendor_fix_state="will not fix")
+        c = _finding(package="bash", vendor_fix_state=None)
+        kept, dropped = apply_vendor_states([a, b, c])
+        self.assertEqual(dropped, 1)
+        self.assertEqual([f.package for f in kept], ["openssl", "bash"])
+
+    def test_enricher_annotates_and_records(self):
+        f = _finding(package="kernel", description="base")
+        enr = NvdEnricher.__new__(NvdEnricher)
+        enr._major = "9"
+        data = {"package_state": [
+            {"cpe": "cpe:/o:redhat:enterprise_linux:9", "package_name": "kernel",
+             "fix_state": "Will not fix"}]}
+        enr._annotate_vendor_state(f, data)
+        self.assertEqual(f.vendor_fix_state, "will not fix")
+        self.assertIn("no dnf security update will ship", f.description)
 
 
 class TestFixExport(unittest.TestCase):

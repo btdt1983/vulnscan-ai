@@ -16,8 +16,8 @@ from .ai import PROVIDERS, ProviderError, get_provider
 from .config import Config
 from .fips import status_line
 from .models import (
-    Finding, apply_ignores, dedup_cross_scanner, findings_from_json,
-    findings_to_json, merge_findings, severity_rank,
+    Finding, apply_ignores, apply_vendor_states, dedup_cross_scanner,
+    findings_from_json, findings_to_json, merge_findings, severity_rank,
 )
 from .report import write_report
 from .scanners import SCANNERS, NvdEnricher, detect_distro, download_oval
@@ -106,6 +106,11 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
     if enrich and findings:
         _eprint(f"  > enriching {len(findings)} finding(s) from CVE feeds...")
         NvdEnricher(cfg).enrich(findings)
+        if cfg.vendor_state_filter:
+            findings, dropped = apply_vendor_states(findings)
+            if dropped:
+                _eprint(f"  - {dropped} finding(s) dropped "
+                        f"(Red Hat: not affected)")
     return findings
 
 

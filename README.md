@@ -182,6 +182,13 @@ The scanners are built to avoid noise:
   isn't an exposure if the firewall drops it).
 - Findings that **`dnf` and `oscap` both report** (same advisory/CVE) are merged
   into one.
+- **Vendor fix state** (during enrichment): Red Hat publishes, per CVE and per
+  product, whether each package is actually affected. Findings Red Hat marks
+  **"Not affected"** for this RHEL release are dropped as confirmed false
+  positives; **"Will not fix" / "Out of support scope" / "Fix deferred"** are
+  kept but annotated (a real issue with no dnf update coming — mitigate
+  manually), so the AI won't propose a pointless `dnf update`. Disable with
+  `"vendor_state_filter": false` in the config.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

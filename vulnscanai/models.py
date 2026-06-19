@@ -78,6 +78,10 @@ class Finding:
     fixed_version: Optional[str] = None
     advisory: Optional[str] = None     # e.g. RHSA-2024:1234
     description: str = ""
+    # Red Hat's per-product fix state for this CVE/package, when known:
+    # "not affected" | "will not fix" | "out of support scope" |
+    # "fix deferred" | "affected" | ... (set by the nvd enricher).
+    vendor_fix_state: Optional[str] = None
     references: List[str] = field(default_factory=list)
     remediation: Optional[Remediation] = None
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -218,6 +222,26 @@ def apply_ignores(findings: List[Finding],
     if not patterns:
         return findings, 0
     kept = [f for f in findings if not match_ignore(f, patterns)]
+    return kept, len(findings) - len(kept)
+
+
+# Red Hat publishes, per CVE and per product, whether each package is actually
+# affected. "not affected" is a confirmed false positive for this host. The
+# won't-fix family describes real issues the vendor will not ship a security
+# update for, so those are kept (and annotated by the enricher) — only the
+# "not affected" verdict is safe to drop.
+VENDOR_NOT_AFFECTED = "not affected"
+VENDOR_NO_FIX_STATES = {"will not fix", "out of support scope", "fix deferred"}
+
+
+def apply_vendor_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
+    """Drop findings Red Hat marks 'not affected' for this product.
+
+    Returns (kept, suppressed_count). Findings carrying any other vendor state
+    (including the won't-fix family, which are genuine) are kept unchanged.
+    """
+    kept = [f for f in findings
+            if (f.vendor_fix_state or "").strip().lower() != VENDOR_NOT_AFFECTED]
     return kept, len(findings) - len(kept)
 
 

@@ -101,6 +101,8 @@ def build_blocks(findings: List[Finding], hostname: str, generated: str) -> List
             f"({f.installed_version or '?'} -> {f.fixed_version or '?'})  |  "
             f"CVSS: {f.cvss_score if f.cvss_score is not None else 'n/a'}"
         )
+        if f.vendor_fix_state and f.vendor_fix_state.lower() != "affected":
+            meta += f"  |  Vendor: {f.vendor_fix_state}"
         blocks.append({"t": "meta", "text": meta})
         if f.description:
             blocks.append({"t": "para", "text": f.description[:1200]})
