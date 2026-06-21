@@ -2,7 +2,8 @@ name: release
 
 # Build, sign, and publish to the signed dnf repo on a version tag.
 # Runs on a SELF-HOSTED runner that lives on (or can reach) the repo host and
-# holds the signing key on an OpenPGP smartcard / HSM.
+# holds the production signing key (passphrase-protected software key today;
+# an OpenPGP smartcard / HSM remains the eventual goal — see the PIN step).
 on:
   push:
     tags: ['v*']
@@ -19,7 +20,7 @@ jobs:
       DISTS: el9
       # noarch package is mirrored into these EL trees with no rebuild.
       EXTRA_DISTS: el10
-      # Signing identity = the smartcard/HSM key already imported on the runner.
+      # Signing identity = the production key imported on the runner.
       VULNSCANAI_GPG_EMAIL: ${{ vars.SIGNING_EMAIL }}
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
@@ -30,18 +31,22 @@ jobs:
           v=$(awk -F'= *' '/^version *=/{gsub(/[[:space:]]/,"",$2);print $2;exit}' setup.cfg)
           [ "${GITHUB_REF_NAME#v}" = "$v" ] || { echo "tag != version $v"; exit 1; }
 
-      - name: Preset smartcard PIN (so signing is non-interactive)
-        # The runner's gpg-agent must be able to use the card unattended. With a
-        # YubiKey, preset the user PIN for the signing key's keygrip.
+      - name: Provision the signing passphrase (so signing is non-interactive)
+        # Software key: stage the passphrase secret into a 0600 file that
+        # make-repo.sh reads via VULNSCANAI_GPG_PASSPHRASE_FILE.
+        # Hardware key (future): instead preset the card's user PIN for the
+        # signing keygrip — `gpg-preset-passphrase --preset <KEYGRIP> <<< $PIN`.
         run: |
-          export GPG_TTY=$(tty || echo /dev/null)
-          gpg --card-status >/dev/null 2>&1 || true
-          if [ -n "${{ secrets.CARD_PIN }}" ] && [ -n "${{ vars.SIGNING_KEYGRIP }}" ]; then
-            /usr/libexec/gpg-preset-passphrase --preset "${{ vars.SIGNING_KEYGRIP }}" <<< "${{ secrets.CARD_PIN }}"
-          fi
+          umask 077
+          printf '%s' "${{ secrets.SIGNING_PASSPHRASE }}" > "$RUNNER_TEMP/signing.pass"
+          echo "VULNSCANAI_GPG_PASSPHRASE_FILE=$RUNNER_TEMP/signing.pass" >> "$GITHUB_ENV"
 
       - name: Build, sign, publish, reload
         run: bash packaging/release.sh
+
+      - name: Scrub the staged passphrase
+        if: always()
+        run: rm -f "$RUNNER_TEMP/signing.pass"
 
       - name: Smoke test the live repo (all dists)
         run: |

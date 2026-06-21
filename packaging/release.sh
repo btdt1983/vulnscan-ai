@@ -12,7 +12,9 @@
 #   RELEASE_TAG   if set (e.g. v0.1.5), must match setup.cfg version
 #   USE_MOCK=1    force clean-chroot mock build even for the host dist
 #   SUDO          command prefix for privileged steps (default empty / root)
-#   VULNSCANAI_GPG_EMAIL  signing identity (HSM/smartcard key for releases)
+#   VULNSCANAI_GPG_EMAIL  signing identity (default security@techhack.nl)
+#   VULNSCANAI_GPG_PASSPHRASE_FILE  0600 file with the key passphrase (required
+#                 for the production key; passed through to make-repo.sh)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

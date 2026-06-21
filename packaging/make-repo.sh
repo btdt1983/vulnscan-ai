@@ -18,11 +18,14 @@
 #
 # Usage:   packaging/make-repo.sh [REPO_ROOT]
 # Env:     VULNSCANAI_GPG_NAME, VULNSCANAI_GPG_EMAIL, RPMS_SRC,
-#          REPO_BASEURL (e.g. https://repo.techhack.nl), DIST (e.g. el9)
+#          REPO_BASEURL (e.g. https://repo.techhack.nl), DIST (e.g. el9),
+#          VULNSCANAI_GPG_PASSPHRASE_FILE (0600 file with the key passphrase;
+#          required for the production release key), VULNSCANAI_GPG_PASSPHRASE
+#          (inline alternative), VULNSCANAI_GPG_EXPIRE (key expiry, default 0).
 set -euo pipefail
 
-KEY_NAME="${VULNSCANAI_GPG_NAME:-techhack repo signing}"
-KEY_EMAIL="${VULNSCANAI_GPG_EMAIL:-security@example.invalid}"
+KEY_NAME="${VULNSCANAI_GPG_NAME:-techhack release signing}"
+KEY_EMAIL="${VULNSCANAI_GPG_EMAIL:-security@techhack.nl}"
 REPO_ROOT="${1:-${VULNSCANAI_REPO_DIR:-$PWD/dist/repo}}"
 RPMS_SRC="${RPMS_SRC:-$(rpm --eval '%{_topdir}')/RPMS}"
 REPO_BASEURL="${REPO_BASEURL:-file://$REPO_ROOT}"
@@ -40,20 +43,43 @@ for t in rpm rpmsign gpg createrepo_c; do
     command -v "$t" >/dev/null || { echo "ERROR: missing '$t'"; exit 1; }
 done
 
-# 1. Signing key (passphrase-less here; use an HSM/smartcard for releases).
+# Passphrase for the signing key. Prefer a 0600 file pointed at by
+# VULNSCANAI_GPG_PASSPHRASE_FILE; an inline VULNSCANAI_GPG_PASSPHRASE is also
+# accepted and staged to a temp file. With neither set the key is generated
+# unprotected (demo only — releases MUST set a passphrase).
+PASS_FILE="${VULNSCANAI_GPG_PASSPHRASE_FILE:-}"
+_PASS_TMP=""
+if [ -z "$PASS_FILE" ] && [ -n "${VULNSCANAI_GPG_PASSPHRASE:-}" ]; then
+    _PASS_TMP="$(mktemp)"; chmod 600 "$_PASS_TMP"
+    printf '%s' "$VULNSCANAI_GPG_PASSPHRASE" > "$_PASS_TMP"
+    PASS_FILE="$_PASS_TMP"
+fi
+trap '[ -n "$_PASS_TMP" ] && rm -f "$_PASS_TMP"' EXIT
+GPG_PASS=()
+[ -n "$PASS_FILE" ] && GPG_PASS=(--pinentry-mode loopback --passphrase-file "$PASS_FILE")
+
+# 1. Signing key. Passphrase-protected when a passphrase is configured (the
+#    production path); unprotected otherwise (demo). For a hardware-backed key,
+#    import the card and point VULNSCANAI_GPG_EMAIL at its UID — key generation
+#    is skipped when a secret key for that identity already exists.
 if ! gpg --list-secret-keys "$KEY_EMAIL" >/dev/null 2>&1; then
     echo ">> generating GPG signing key for $KEY_EMAIL"
+    [ -n "$PASS_FILE" ] || echo "   WARNING: no passphrase configured — key will be UNPROTECTED"
     batch="$(mktemp)"
-    cat > "$batch" <<EOF
-%no-protection
-Key-Type: RSA
-Key-Length: 4096
-Name-Real: $KEY_NAME
-Name-Email: $KEY_EMAIL
-Expire-Date: 0
-%commit
-EOF
-    gpg --batch --gen-key "$batch"; rm -f "$batch"
+    {
+        echo "Key-Type: RSA"
+        echo "Key-Length: 4096"
+        echo "Name-Real: $KEY_NAME"
+        echo "Name-Email: $KEY_EMAIL"
+        echo "Expire-Date: ${VULNSCANAI_GPG_EXPIRE:-0}"
+        if [ -n "$PASS_FILE" ]; then
+            echo "Passphrase: $(cat "$PASS_FILE")"
+        else
+            echo "%no-protection"
+        fi
+        echo "%commit"
+    } > "$batch"
+    gpg --batch "${GPG_PASS[@]}" --gen-key "$batch"; rm -f "$batch"
 fi
 KEYID="$(gpg --list-keys --with-colons "$KEY_EMAIL" | awk -F: '/^pub:/{print $5; exit}')"
 echo ">> signing key id: $KEYID"
@@ -62,8 +88,10 @@ echo ">> signing key id: $KEYID"
 mapfile -t RPMS < <(find "$RPMS_SRC" -name "${PKG_GLOB}.rpm" ! -name '*.src.rpm' | sort)
 [ "${#RPMS[@]}" -gt 0 ] || { echo "ERROR: no RPMs matching '${PKG_GLOB}.rpm' under $RPMS_SRC"; exit 1; }
 echo ">> signing ${#RPMS[@]} package(s)"
+SIGN_PASS=""
+[ -n "$PASS_FILE" ] && SIGN_PASS="--passphrase-file $PASS_FILE"
 rpmsign --define "_gpg_name $KEY_EMAIL" \
-        --define "__gpg_sign_cmd %{__gpg} gpg --no-verbose --no-armor --pinentry-mode loopback --batch -u %{_gpg_name} -sbo %{__signature_filename} --digest-algo sha256 %{__plaintext_filename}" \
+        --define "__gpg_sign_cmd %{__gpg} gpg --no-verbose --no-armor --pinentry-mode loopback --batch $SIGN_PASS -u %{_gpg_name} -sbo %{__signature_filename} --digest-algo sha256 %{__plaintext_filename}" \
         --addsign "${RPMS[@]}"
 
 # 3. Place each RPM into the el<N>/ dir implied by its dist tag.
@@ -96,7 +124,7 @@ for dist in "${!DISTS[@]}"; do
     echo ">> createrepo $dist"
     createrepo_c --update "$REPO_ROOT/$dist" >/dev/null
     rm -f "$REPO_ROOT/$dist/repodata/repomd.xml.asc"
-    gpg --batch --yes --pinentry-mode loopback -u "$KEYID" \
+    gpg --batch --yes "${GPG_PASS[@]}" -u "$KEYID" \
         --detach-sign --armor "$REPO_ROOT/$dist/repodata/repomd.xml"
 done
 
