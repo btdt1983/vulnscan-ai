@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.10
+Version:        0.1.11
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -98,6 +98,16 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Mon Jun 22 2026 vulnscan-ai <noreply@example.invalid> - 0.1.11-1
+- Runtime-exposure filter: a vulnerable daemon package whose systemd
+  service/socket units are all stopped AND disabled/masked is downgraded
+  to "low" and annotated (not exposed until the service is started),
+  cutting noise without hiding the issue. Conservative — packages with no
+  service unit (libraries, CLI tools) are untouched, enabled/static/
+  socket-listening units count as exposed, undetermined state keeps full
+  severity. Toggle "service_state_filter" (default on).
+- Released signed with the production GPG key (techhack release signing).
+
 * Fri Jun 19 2026 vulnscan-ai <noreply@example.invalid> - 0.1.10-1
 - Fewer false positives via Red Hat per-CVE package_state: findings the
   vendor marks "Not affected" for this RHEL release are dropped; the
