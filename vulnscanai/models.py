@@ -82,6 +82,12 @@ class Finding:
     # "not affected" | "will not fix" | "out of support scope" |
     # "fix deferred" | "affected" | ... (set by the nvd enricher).
     vendor_fix_state: Optional[str] = None
+    # Runtime exposure of the affected package, set by the service-state
+    # enricher: "active" (ships a service/socket that is running or enabled),
+    # "inactive" (ships only dormant — stopped and disabled — units),
+    # "no-service" (ships no service units; risk is library/CLI level), or
+    # None (not assessed). Only "inactive" is acted on (severity downgrade).
+    runtime_state: Optional[str] = None
     references: List[str] = field(default_factory=list)
     remediation: Optional[Remediation] = None
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -243,6 +249,39 @@ def apply_vendor_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
     kept = [f for f in findings
             if (f.vendor_fix_state or "").strip().lower() != VENDOR_NOT_AFFECTED]
     return kept, len(findings) - len(kept)
+
+
+def apply_service_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
+    """Downgrade findings whose affected daemon is confirmed dormant.
+
+    A package marked runtime_state == "inactive" ships only systemd units that
+    are stopped AND disabled: the vulnerability is real but not exposed until
+    the service is started. We keep the finding (so it resurfaces if you ever
+    enable the unit) but lower its severity to "low" and annotate it, so the
+    severity floor filters it out of the actionable view. The original severity
+    is preserved in raw["severity_before_runtime"].
+
+    Returns (findings, downgraded_count). Findings are mutated in place.
+    """
+    downgraded = 0
+    for f in findings:
+        if (f.runtime_state or "") != "inactive":
+            continue
+        if severity_rank(f.severity) <= severity_rank("low"):
+            continue  # already at/below the floor; just leave the annotation
+        unit_list = f.raw.get("service_units", [])
+        units = ", ".join(unit_list) or "its service"
+        verb = "are" if len(unit_list) > 1 else "is"
+        orig = f.severity
+        f.raw["severity_before_runtime"] = orig
+        f.severity = "low"
+        note = (f"Runtime exposure: the package is installed but {units} "
+                f"{verb} stopped and disabled — not exposed until started. "
+                f"Severity lowered from {orig} to low; reassess if you enable "
+                f"or start the service.")
+        f.description = (f.description + "\n" + note) if f.description else note
+        downgraded += 1
+    return findings, downgraded
 
 
 def findings_to_json(findings: List[Finding], indent: int = 2) -> str:

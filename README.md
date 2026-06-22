@@ -194,6 +194,15 @@ The scanners are built to avoid noise:
   kept but annotated (a real issue with no dnf update coming — mitigate
   manually), so the AI won't propose a pointless `dnf update`. Disable with
   `"vendor_state_filter": false` in the config.
+- **Runtime exposure** (local, `rpm` + `systemctl`): a vulnerable daemon package
+  whose service units are **all stopped *and* disabled/masked** isn't exposed
+  until someone starts it, so the finding is **downgraded to `low`** and
+  annotated (it still shows in the full report, and resurfaces at full severity
+  if you enable the unit). Conservative by design: packages shipping **no**
+  service unit (libraries, CLI tools like `openssl`/`glibc`) are never touched,
+  a unit that is enabled, `static` or has a listening socket counts as exposed,
+  and an undetermined state keeps full severity. Disable with
+  `"service_state_filter": false` in the config.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

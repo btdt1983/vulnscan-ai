@@ -16,11 +16,14 @@ from .ai import PROVIDERS, ProviderError, get_provider
 from .config import Config
 from .fips import status_line
 from .models import (
-    Finding, apply_ignores, apply_vendor_states, dedup_cross_scanner,
-    findings_from_json, findings_to_json, merge_findings, severity_rank,
+    Finding, apply_ignores, apply_service_states, apply_vendor_states,
+    dedup_cross_scanner, findings_from_json, findings_to_json, merge_findings,
+    severity_rank,
 )
 from .report import write_report
-from .scanners import SCANNERS, NvdEnricher, detect_distro, download_oval
+from .scanners import (
+    SCANNERS, NvdEnricher, ServiceStateEnricher, detect_distro, download_oval,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -111,6 +114,16 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
             if dropped:
                 _eprint(f"  - {dropped} finding(s) dropped "
                         f"(Red Hat: not affected)")
+    # Runtime exposure: downgrade findings whose daemon is stopped and disabled.
+    # Local-only (rpm + systemctl), so it runs regardless of network enrichment.
+    if cfg.service_state_filter and findings:
+        enricher = ServiceStateEnricher(cfg)
+        if enricher.available():
+            enricher.enrich(findings)
+            findings, downgraded = apply_service_states(findings)
+            if downgraded:
+                _eprint(f"  - {downgraded} finding(s) downgraded "
+                        f"(service inactive/disabled)")
     return findings
 
 

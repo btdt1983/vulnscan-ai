@@ -10,10 +10,11 @@ import unittest
 from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 from vulnscanai.models import (
-    Finding, Remediation, apply_ignores, apply_vendor_states,
-    dedup_cross_scanner, findings_from_json, findings_to_json, match_ignore,
-    merge_findings, severity_rank,
+    Finding, Remediation, apply_ignores, apply_service_states,
+    apply_vendor_states, dedup_cross_scanner, findings_from_json,
+    findings_to_json, match_ignore, merge_findings, severity_rank,
 )
+from vulnscanai.scanners.runtime_state import ServiceStateEnricher
 from vulnscanai.scanners.nvd import (
     NvdEnricher, _cpe_major, _package_matches, select_package_state,
 )
@@ -579,6 +580,105 @@ class TestVendorState(unittest.TestCase):
         enr._annotate_vendor_state(f, data)
         self.assertEqual(f.vendor_fix_state, "will not fix")
         self.assertIn("no dnf security update will ship", f.description)
+
+
+class TestServiceState(unittest.TestCase):
+    def _enricher(self, units_map, sysstate):
+        enr = ServiceStateEnricher.__new__(ServiceStateEnricher)
+        enr._unit_cache = {}
+        enr._package_units = lambda pkg: units_map.get(pkg, [])
+        enr._systemctl = lambda verb, unit: sysstate.get((verb, unit), "")
+        return enr
+
+    def test_apply_downgrades_only_inactive(self):
+        a = _finding(package="httpd", severity="important",
+                     runtime_state="inactive")
+        a.raw["service_units"] = ["httpd.service"]
+        b = _finding(package="openssl", severity="critical",
+                     runtime_state="no-service")
+        c = _finding(package="nginx", severity="important",
+                     runtime_state="active")
+        d = _finding(package="bash", severity="high", runtime_state=None)
+        out, n = apply_service_states([a, b, c, d])
+        self.assertEqual(n, 1)
+        self.assertEqual(a.severity, "low")
+        self.assertEqual(a.raw["severity_before_runtime"], "important")
+        self.assertIn("httpd.service", a.description)
+        self.assertIn("not exposed", a.description)
+        # Everything else is left exactly as it was.
+        self.assertEqual([b.severity, c.severity, d.severity],
+                         ["critical", "important", "high"])
+
+    def test_apply_skips_already_low(self):
+        f = _finding(package="httpd", severity="low", runtime_state="inactive")
+        _out, n = apply_service_states([f])
+        self.assertEqual(n, 0)
+        self.assertEqual(f.severity, "low")
+        self.assertNotIn("severity_before_runtime", f.raw)
+
+    def test_exposure_classification(self):
+        units = {"httpd": ["httpd.service"], "openssl": [],
+                 "chrony": ["chronyd.service"]}
+        st = {}
+        enr = self._enricher(units, st)
+        # No units shipped -> library/CLI level, untouched.
+        self.assertEqual(enr._exposure("openssl"), ("no-service", []))
+        # Running service -> exposed.
+        st[("is-active", "httpd.service")] = "active"
+        self.assertEqual(enr._exposure("httpd")[0], "active")
+        # Stopped AND disabled -> dormant.
+        st[("is-active", "chronyd.service")] = "inactive"
+        st[("is-enabled", "chronyd.service")] = "disabled"
+        self.assertEqual(enr._exposure("chrony"), ("inactive", ["chronyd.service"]))
+        # Stopped but enabled -> still exposed (starts on boot).
+        st[("is-enabled", "chronyd.service")] = "enabled"
+        self.assertEqual(enr._exposure("chrony")[0], "active")
+        # Stopped, unknown enable state -> exposed (never guess exposure away).
+        st[("is-enabled", "chronyd.service")] = ""
+        self.assertEqual(enr._exposure("chrony")[0], "active")
+
+    def test_multi_unit_all_dormant(self):
+        # A package is only inactive when ALL its units are dormant.
+        units = {"cups": ["cups.service", "cups.socket"]}
+        st = {("is-active", "cups.service"): "inactive",
+              ("is-enabled", "cups.service"): "disabled",
+              ("is-active", "cups.socket"): "active"}  # socket still listening
+        enr = self._enricher(units, st)
+        self.assertEqual(enr._exposure("cups")[0], "active")
+        st[("is-active", "cups.socket")] = "inactive"
+        st[("is-enabled", "cups.socket")] = "disabled"
+        self.assertEqual(enr._exposure("cups")[0], "inactive")
+
+    def test_enrich_sets_state_and_units(self):
+        enr = self._enricher(
+            {"chrony": ["chronyd.service"]},
+            {("is-active", "chronyd.service"): "inactive",
+             ("is-enabled", "chronyd.service"): "disabled"})
+        enr.available = lambda: True
+        f = _finding(package="chrony", severity="moderate")
+        enr.enrich([f])
+        self.assertEqual(f.runtime_state, "inactive")
+        self.assertEqual(f.raw["service_units"], ["chronyd.service"])
+
+    def test_package_units_parses_rpm_ql(self):
+        enr = ServiceStateEnricher.__new__(ServiceStateEnricher)
+        enr._unit_cache = {}
+        listing = "\n".join([
+            "/usr/lib/systemd/system/httpd.service",
+            "/usr/lib/systemd/system/httpd.socket",
+            "/usr/lib/systemd/system/httpd@.service",  # template -> skipped
+            "/usr/sbin/httpd",
+            "/etc/httpd/conf/httpd.conf",
+        ])
+        enr_run = lambda *a, **k: (0, listing, "")
+        import vulnscanai.scanners.runtime_state as rs
+        orig = rs.run
+        rs.run = enr_run
+        try:
+            self.assertEqual(enr._package_units("httpd"),
+                             ["httpd.service", "httpd.socket"])
+        finally:
+            rs.run = orig
 
 
 class TestFixExport(unittest.TestCase):

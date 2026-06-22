@@ -34,6 +34,7 @@ class Config:
     min_severity: str = "low"                # low|moderate|important|critical
     enrich: bool = True                      # query CVE web feeds for detail
     vendor_state_filter: bool = True         # drop Red Hat "not affected" CVEs
+    service_state_filter: bool = True        # downgrade dormant-daemon findings
     redhat_api: str = "https://access.redhat.com/hydra/rest/securitydata"
     nvd_api: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     nvd_api_key: Optional[str] = None
