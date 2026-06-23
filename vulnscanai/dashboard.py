@@ -263,7 +263,7 @@ def render_login(error: str = "") -> str:
 <div class="login">
   <div class="brandmark">{logo_svg(40)}
     <span class="wm">vulnscan<span class="dot">&middot;</span>ai</span></div>
-  <div class="tag">findings dashboard</div>{err}
+  <div class="tag">dashboard</div>{err}
   <form method=post action="/login">
     <label>Username</label><input type=text name=username autofocus>
     <label>Password</label><input type=password name=password>
