@@ -22,7 +22,8 @@ STAGE="/tmp/${NAME}-${VERSION}"
 echo ">> staging ${NAME} ${VERSION}" >&2
 rm -rf "${STAGE}"
 mkdir -p "${STAGE}" "${SRCDIR}" "${TOPDIR}/SPECS"
-cp -r vulnscanai packaging tests pyproject.toml setup.cfg README.md COMMANDS.md config.sample.json "${STAGE}/"
+cp -r vulnscanai packaging tests pyproject.toml setup.cfg README.md COMMANDS.md \
+    LICENSE CONTRIBUTING.md CLA.md config.sample.json "${STAGE}/"
 # Drop build/cache artefacts so the source tarball is reproducible.
 find "${STAGE}" -name '__pycache__' -type d -prune -exec rm -rf {} +
 find "${STAGE}" -name '*.pyc' -delete
