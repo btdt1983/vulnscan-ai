@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """CVE enrichment from public vulnerability databases.
 
 Adds CVSS scores, vectors and human-readable descriptions to findings by

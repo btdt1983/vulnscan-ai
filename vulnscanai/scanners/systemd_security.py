@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """systemd service hardening scanner.
 
 Wraps `systemd-analyze security`, which scores each service unit's sandboxing

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Export AI remediation plans as a ready-to-run bash script or Ansible playbook.
 
 These are generated from the same `Remediation` objects the interactive `fix`

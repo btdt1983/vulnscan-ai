@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Dependency-free unit tests (stdlib unittest). Run:  python3 -m unittest -v"""
 
 from __future__ import annotations

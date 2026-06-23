@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """OpenSCAP (oscap) OVAL-based CVE scanner.
 
 Uses a published OVAL feed to evaluate the host for known vulnerabilities. Only

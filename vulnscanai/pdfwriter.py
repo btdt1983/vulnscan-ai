@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """A tiny, dependency-free PDF writer.
 
 Enough to lay out a multi-page text report using the PDF built-in fonts

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """DeepSeek provider (optional).
 
 DeepSeek exposes an OpenAI-compatible Chat Completions API. Set DEEPSEEK_API_KEY.

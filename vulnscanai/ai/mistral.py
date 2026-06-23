@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Mistral AI provider (optional).
 
 Mistral exposes an OpenAI-compatible Chat Completions API. Set MISTRAL_API_KEY.

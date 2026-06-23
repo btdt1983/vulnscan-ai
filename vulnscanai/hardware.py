@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Host capability detection (RAM and GPU) for model sizing.
 
 Ollama runs models on the GPU automatically when NVIDIA/AMD drivers are

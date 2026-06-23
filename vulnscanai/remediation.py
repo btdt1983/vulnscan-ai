@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """AI-driven remediation: propose fixes, gate on approval, then apply.
 
 Design choices (per the tool's safety posture):

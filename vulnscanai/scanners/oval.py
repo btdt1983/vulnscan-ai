@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Download and stage the OVAL security feed used by OpenSCAP.
 
 OpenSCAP needs an OVAL definitions file describing known vulnerabilities for

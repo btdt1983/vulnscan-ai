@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Moonshot Kimi provider (optional).
 
 Kimi exposes an OpenAI-compatible Chat Completions API. Set MOONSHOT_API_KEY.

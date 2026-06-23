@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """OpenAI / ChatGPT provider (optional).
 
 Uses the Chat Completions API. Set OPENAI_API_KEY. Also works against any

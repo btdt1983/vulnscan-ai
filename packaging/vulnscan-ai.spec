@@ -6,8 +6,8 @@ Version:        0.1.11
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
-License:        Apache-2.0
-URL:            https://example.invalid/vulnscan-ai
+License:        AGPL-3.0-or-later
+URL:            https://vulnscan-ai.techhack.nl
 Source0:        %{name}-%{version}.tar.gz
 
 BuildArch:      noarch
@@ -75,6 +75,7 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %{python3} -m unittest discover -s tests -v
 
 %files -f %{pyproject_files}
+%license LICENSE
 %doc README.md COMMANDS.md
 %{_bindir}/vulnscan-ai
 %{_mandir}/man1/%{name}.1*

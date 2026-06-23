@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """vulnscan-ai: RHEL vulnerability scanner with AI-assisted remediation.
 
 A FIPS-aware command line tool that scans RHEL-based systems for known

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """SSH server hardening scanner.
 
 Reports common sshd misconfigurations (root login, weak ciphers/MACs/KEX,

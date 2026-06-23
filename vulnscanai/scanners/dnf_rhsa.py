@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Native RHEL scanner: dnf/yum updateinfo + Red Hat Security Advisories.
 
 This is the most authoritative source for a RHEL-based host. It asks the

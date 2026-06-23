@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Local / offline provider via an Ollama-compatible server.
 
 For air-gapped or data-sensitive environments where nothing may leave the

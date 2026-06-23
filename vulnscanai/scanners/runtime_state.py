@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Runtime-exposure enricher.
 
 A vulnerability in an installed package only bites at runtime when something

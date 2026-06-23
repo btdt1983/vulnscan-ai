@@ -323,3 +323,16 @@ vulnscanai/
 Automated remediation changes a live system. Review proposals, prefer
 `--dry-run` first, and test on non-production hosts. AI suggestions can be
 wrong — the approval gate exists for a reason.
+
+## License
+
+Copyright (C) 2026 techhack. Licensed under the **GNU Affero General Public
+License v3.0 or later** ([AGPL-3.0-or-later](LICENSE)). This keeps the project
+open: anyone who runs a modified version — including over a network as a service
+— must make their source available under the same terms.
+
+The copyright holder retains the right to offer the software under separate
+**commercial terms**. Contributions are accepted under the
+[Contributor License Agreement](CLA.md) (see [CONTRIBUTING.md](CONTRIBUTING.md)),
+which preserves that option. For a commercial license, contact
+security@techhack.nl.

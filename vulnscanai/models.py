@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Core data models shared across scanners, AI providers and the reporter."""
 
 from __future__ import annotations

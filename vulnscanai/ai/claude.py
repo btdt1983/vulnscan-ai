@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 techhack
 """Anthropic Claude provider (default).
 
 Calls the Messages API directly over the FIPS-hardened HTTP helper, so it
