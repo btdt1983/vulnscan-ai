@@ -10,5 +10,5 @@ remediation, applies fixes only after explicit approval, and can export a
 PDF report.
 """
 
-__version__ = "0.1.16"
+__version__ = "0.1.17"
 __all__ = ["__version__"]

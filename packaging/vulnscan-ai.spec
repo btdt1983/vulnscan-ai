@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.16
+Version:        0.1.17
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,13 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.17-1
+- New 'webroot' scanner: finds web-exposed sensitive files in document roots
+  (*.sql/*.sqlite dumps, .env/wp-config.php secrets, .git/, *.bak/*~ backups,
+  archives, private keys) plus world-writable files. Roots read from nginx/
+  apache/lighttpd/litespeed configs and defaults. Picked up by 'scan --all'.
+- Dashboard login page and header now carry the vulnscan-ai brand logo.
+
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.16-1
 - Dashboard prints the login username on start, and a copy-paste firewalld
   rule when the port looks closed in a running firewalld (network binds only).
