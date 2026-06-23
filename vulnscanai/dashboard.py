@@ -42,6 +42,17 @@ SESSION_TTL = 8 * 3600           # seconds
 HTTPStatusForbidden = 403
 HTTPStatusNotFound = 404
 HTTPStatusSeeOther = 303
+
+# Ports browsers refuse to open (Chrome ERR_UNSAFE_PORT / Firefox banned list).
+# Not exhaustive, but covers the ones a dashboard might plausibly land on.
+BROWSER_BLOCKED_PORTS = {
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77,
+    79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123,
+    135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530,
+    531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995,
+    1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061, 6000, 6566, 6665, 6666,
+    6667, 6668, 6669, 6697, 10080,
+}
 _SEV_COLOR = {
     "critical": "#b3261e", "important": "#d1410c", "high": "#d1410c",
     "moderate": "#b58900", "medium": "#b58900", "low": "#1a7f37",
@@ -457,6 +468,9 @@ def serve(cfg, *, port: Optional[int] = None,
             "no dashboard password set — run: vulnscan-ai dashboard --set-password")
     cfg.ensure_state_dir()
     port = port or cfg.dashboard_port
+    if port in BROWSER_BLOCKED_PORTS:
+        print(f"WARNING: port {port} is blocked by most browsers "
+              f"(ERR_UNSAFE_PORT). Use a safe port, e.g. --port 65101.")
     allow = [e for e in (cfg.dashboard_allow or []) if valid_allow_entry(e)]
     # Localhost-only unless explicit bind or an allow-list opens it to the network.
     if bind is None:

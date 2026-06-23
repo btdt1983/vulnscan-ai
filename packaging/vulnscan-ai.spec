@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.14
+Version:        0.1.15
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,10 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.15-1
+- Dashboard default port is now 65101 (was 6666, which browsers block with
+  ERR_UNSAFE_PORT). The dashboard warns when started on a browser-blocked port.
+
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.14-1
 - New 'dashboard' command: a stdlib HTTPS web UI behind a login that shows
   saved findings with their explanations, CVEs and any AI fix plan.

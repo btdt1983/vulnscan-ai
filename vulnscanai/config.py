@@ -57,7 +57,7 @@ class Config:
     # Web dashboard (vulnscan-ai dashboard).
     dashboard_user: str = "admin"
     dashboard_password_hash: Optional[str] = None  # set via --set-password
-    dashboard_port: int = 6666
+    dashboard_port: int = 65101            # avoid browser-blocked ports (e.g. 6666)
     dashboard_bind: str = "127.0.0.1"               # localhost unless allow-list
     dashboard_allow: List[str] = field(default_factory=list)  # client IPs/CIDRs
     dashboard_cert: Optional[str] = None            # default: <state_dir>/dashboard-cert.pem

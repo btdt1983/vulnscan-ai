@@ -21,7 +21,7 @@
   "smtp_starttls": false,
 
   "dashboard_user": "admin",
-  "dashboard_port": 6666,
+  "dashboard_port": 65101,
   "dashboard_bind": "127.0.0.1",
   "dashboard_allow": []
 }

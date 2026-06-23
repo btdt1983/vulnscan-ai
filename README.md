@@ -334,12 +334,12 @@ first run, and a single admin account (PBKDF2-SHA256 password hash).
 sudo vulnscan-ai dashboard --set-password
 
 # 2. Run it (foreground), or enable the service
-sudo vulnscan-ai dashboard                 # https://<host>:6666/
+sudo vulnscan-ai dashboard                 # https://<host>:65101/
 sudo systemctl enable --now vulnscan-ai-dashboard
 ```
 
 By default it **binds to localhost only** — reach it with an SSH tunnel
-(`ssh -L 6666:localhost:6666 host`). To let specific machines in, add them to
+(`ssh -L 65101:localhost:65101 host`). To let specific machines in, add them to
 the allow-list (from the CLI or the dashboard itself); the server then also
 listens on the network, but **only** the allow-listed clients (and localhost)
 are served:
@@ -350,7 +350,7 @@ sudo vulnscan-ai dashboard --list            # show user/port/bind/allow-list
 ```
 
 It refuses to start until a password is set, so findings are never exposed
-unauthenticated. Port (`--port`, default 6666) and bind address (`--bind`) are
+unauthenticated. Port (`--port`, default 65101) and bind address (`--bind`) are
 overridable.
 
 ## Safety model

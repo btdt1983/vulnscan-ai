@@ -365,7 +365,7 @@ vulnscan-ai dashboard --allow IP/CIDR ... | --deny IP/CIDR ... | --list
 | `--allow IP/CIDR` | Permit a network client besides localhost (repeatable), then exit. |
 | `--deny IP/CIDR` | Remove a permitted client (repeatable), then exit. |
 | `--list` | Show user / port / bind / allow-list, then exit. |
-| `--port N` | Listen port (default `6666`). |
+| `--port N` | Listen port (default `65101`). |
 | `--bind ADDR` | Bind address (default `127.0.0.1`; auto `0.0.0.0` when an allow-list is set). |
 
 Refuses to start until a password is set. Binds to localhost only unless an
@@ -375,7 +375,7 @@ Also serves `GET /api/findings.json` (authenticated). Run it as a service with
 
 ```bash
 sudo vulnscan-ai dashboard --set-password
-ssh -L 6666:localhost:6666 host    # then browse https://localhost:6666/
+ssh -L 65101:localhost:65101 host    # then browse https://localhost:65101/
 ```
 
 ---

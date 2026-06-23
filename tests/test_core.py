@@ -1011,6 +1011,12 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn("<script>alert(1)</script>", page)
         self.assertIn("&lt;script&gt;", page)
 
+    def test_browser_blocked_ports(self):
+        # The default port must be one browsers actually allow.
+        self.assertEqual(Config().dashboard_port, 65101)
+        self.assertNotIn(65101, dashboard.BROWSER_BLOCKED_PORTS)
+        self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
+
 
 if __name__ == "__main__":
     unittest.main()

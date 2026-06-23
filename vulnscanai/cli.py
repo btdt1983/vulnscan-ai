@@ -667,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="remove a permitted client (repeatable), then exit")
     sp.add_argument("--list", action="store_true",
                     help="show dashboard settings, then exit")
-    sp.add_argument("--port", type=int, help="listen port (default: 6666)")
+    sp.add_argument("--port", type=int, help="listen port (default: 65101)")
     sp.add_argument("--bind",
                     help="bind address (default: 127.0.0.1; auto 0.0.0.0 with an allow-list)")
     sp.set_defaults(func=cmd_dashboard)
