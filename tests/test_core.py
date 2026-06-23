@@ -1011,6 +1011,18 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn("<script>alert(1)</script>", page)
         self.assertIn("&lt;script&gt;", page)
 
+    def test_firewall_hint(self):
+        # Localhost-only never hints (not reachable from the network anyway).
+        self.assertIsNone(dashboard.firewall_hint(65101, "127.0.0.1", []))
+        # No firewall-cmd on the host -> no hint.
+        orig = dashboard.shutil.which
+        dashboard.shutil.which = lambda name: None
+        try:
+            self.assertIsNone(
+                dashboard.firewall_hint(65101, "0.0.0.0", ["10.0.0.0/24"]))
+        finally:
+            dashboard.shutil.which = orig
+
     def test_browser_blocked_ports(self):
         # The default port must be one browsers actually allow.
         self.assertEqual(Config().dashboard_port, 65101)

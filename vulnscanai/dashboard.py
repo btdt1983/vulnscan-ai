@@ -24,6 +24,7 @@ import ipaddress
 import json
 import os
 import secrets
+import shutil
 import socket
 import ssl
 import subprocess
@@ -111,6 +112,40 @@ def valid_allow_entry(entry: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def firewall_hint(port: int, bind: str, allow: List[str]) -> Optional[str]:
+    """Best-effort: when serving on the network behind a running firewalld that
+    doesn't open this port, return a copy-paste rule to allow the clients.
+
+    Returns None when it doesn't apply (localhost only, no firewalld, or the
+    port is already open / covered by a rich rule). Never raises.
+    """
+    if bind in ("127.0.0.1", "::1", "localhost") and not allow:
+        return None  # not reachable from the network anyway
+    if not shutil.which("firewall-cmd"):
+        return None
+    try:
+        st = subprocess.run(["firewall-cmd", "--state"], capture_output=True,
+                            text=True, timeout=5)
+        if st.returncode != 0 or "running" not in st.stdout:
+            return None
+        q = subprocess.run(["firewall-cmd", f"--query-port={port}/tcp"],
+                          capture_output=True, text=True, timeout=5)
+        if q.returncode == 0:                       # port already open
+            return None
+        rr = subprocess.run(["firewall-cmd", "--list-rich-rules"],
+                           capture_output=True, text=True, timeout=5)
+        if f'port="{port}"' in rr.stdout or f"port={port}" in rr.stdout:
+            return None                             # covered by a rich rule
+    except (OSError, subprocess.SubprocessError):
+        return None
+    src = allow[0] if allow else f"{bind}/24"
+    return (f"port {port}/tcp looks closed in firewalld. To let your network "
+            f"clients reach the dashboard:\n"
+            f"    sudo firewall-cmd --permanent --add-rich-rule='rule family=\"ipv4\" "
+            f"source address=\"{src}\" port port=\"{port}\" protocol=\"tcp\" accept'\n"
+            f"    sudo firewall-cmd --reload")
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +527,11 @@ def serve(cfg, *, port: Optional[int] = None,
     where = "localhost only" if (bind in ("127.0.0.1", "::1") and not allow) \
         else f"bind {bind}, allow {allow or 'loopback only'}"
     print(f"vulnscan-ai dashboard: https://{host}:{port}/  ({where})")
+    print(f"Sign in as user '{cfg.dashboard_user}'  "
+          f"(change the password with: vulnscan-ai dashboard --set-password)")
+    hint = firewall_hint(port, bind, allow)
+    if hint:
+        print("Hint: " + hint)
     print("Press Ctrl+C to stop.")
     try:
         httpd.serve_forever()

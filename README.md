@@ -327,10 +327,12 @@ logged and the run continues. With no `notify_email` set, nothing is sent.
 `vulnscan-ai dashboard` serves the saved findings — with their explanations,
 CVEs and any AI fix plan — over a small HTTPS web UI behind a login. It is
 stdlib-only (no extra packages), uses a self-signed certificate generated on
-first run, and a single admin account (PBKDF2-SHA256 password hash).
+first run, and a single admin account — username **`admin`** by default
+(change with `--user`), PBKDF2-SHA256 password hash. On start it prints the
+login username, and a firewall hint if the port looks closed in firewalld.
 
 ```bash
-# 1. Set the admin password (stored hashed)
+# 1. Set the admin password (stored hashed; user 'admin' unless --user given)
 sudo vulnscan-ai dashboard --set-password
 
 # 2. Run it (foreground), or enable the service
@@ -352,6 +354,15 @@ sudo vulnscan-ai dashboard --list            # show user/port/bind/allow-list
 It refuses to start until a password is set, so findings are never exposed
 unauthenticated. Port (`--port`, default 65101) and bind address (`--bind`) are
 overridable.
+
+Opening it to the network is two layers: the app allow-list **and** the host
+firewall. firewalld blocks the port by default — allow it only for your clients:
+
+```bash
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" \
+  source address="192.168.0.0/24" port port="65101" protocol="tcp" accept'
+sudo firewall-cmd --reload
+```
 
 ## Safety model
 
