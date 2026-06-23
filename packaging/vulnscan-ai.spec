@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.13
+Version:        0.1.14
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,14 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.14-1
+- New 'dashboard' command: a stdlib HTTPS web UI behind a login that shows
+  saved findings with their explanations, CVEs and any AI fix plan.
+  Self-signed cert on first run; PBKDF2-SHA256 admin password; localhost-only
+  by default with an IP/CIDR allow-list for specific network clients. Ships a
+  vulnscan-ai-dashboard.service unit.
+- scan/fix/scheduled gain '--all' to run every available scanner.
+
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.13-1
 - Branded startup banner (MOTD) on interactive runs; suppressed for pipes,
   machine output, scheduled runs and via --no-banner / VULNSCANAI_NO_BANNER.
