@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/btdt1983/vulnscan-ai/blob/master/.github/SECURITY.md
+    about: Do not file security issues publicly — email security@techhack.nl.
+  - name: Command reference
+    url: https://github.com/btdt1983/vulnscan-ai/blob/master/COMMANDS.md
+    about: Full reference for every command and option before reporting usage.
+  - name: Website & install
+    url: https://vulnscan-ai.techhack.nl
+    about: Install instructions and an overview of the tool.

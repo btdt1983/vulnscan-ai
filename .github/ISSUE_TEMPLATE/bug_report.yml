@@ -1,0 +1,59 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For anything security-sensitive, **do not use
+        this form** — email security@techhack.nl instead (see the Security
+        Policy).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Command and steps to reproduce
+      description: The exact command(s) you ran.
+      placeholder: |
+        vulnscan-ai scan --scanner dnf --scanner oscap
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: vulnscan-ai version
+      description: Output of `vulnscan-ai --version`.
+      placeholder: vulnscan-ai 0.1.13
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution and version
+      description: e.g. AlmaLinux 9.4, RHEL 10, Rocky 9.
+    validations:
+      required: true
+  - type: dropdown
+    id: scanner
+    attributes:
+      label: Which scanner(s) are involved?
+      multiple: true
+      options: [dnf, oscap, ssh, systemd, ports, "n/a — remediation", "n/a — other"]
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Paste the relevant output or error. Redact anything sensitive.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: FIPS mode, AI provider, config tweaks, etc.

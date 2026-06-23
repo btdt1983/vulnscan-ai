@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The use case or pain point, not just the proposed solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like vulnscan-ai to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, workarounds, or existing tools.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - label: A new or improved scanner
+        - label: Remediation / fix workflow
+        - label: Reporting or export
+        - label: AI provider / model support
+        - label: Packaging, CI, or docs

@@ -1,5 +1,6 @@
 # vulnscan-ai
 
+[![CI](https://github.com/btdt1983/vulnscan-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/btdt1983/vulnscan-ai/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/btdt1983/vulnscan-ai)](https://github.com/btdt1983/vulnscan-ai/releases)
 
