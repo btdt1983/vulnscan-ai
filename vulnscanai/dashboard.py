@@ -226,13 +226,33 @@ input[type=text],input[type=password]{padding:.45rem .6rem;border:1px solid #cdd
 button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.5rem .9rem;
   font-size:.92rem;cursor:pointer}button:hover{background:#0a4bbf}
 .login{max-width:22rem;margin:5rem auto;background:#fff;border:1px solid #e6e9ee;
-  border-radius:12px;padding:1.5rem}
-.login h1{font-size:1.2rem;margin:0 0 1rem}.login input{width:100%;margin:.3rem 0 .8rem}
+  border-radius:12px;padding:1.75rem 1.5rem}
+.login input{width:100%;margin:.3rem 0 .8rem}
+.brandmark{display:flex;align-items:center;justify-content:center;gap:.55rem;margin-bottom:.4rem}
+.brandmark .wm{font-size:1.5rem;font-weight:800;letter-spacing:-.02em;color:#10151c}
+.brandmark .wm .dot{color:#1f6feb}
+.login .tag{text-align:center;color:#5b6675;font-size:.84rem;margin:0 0 1.3rem;
+  text-transform:uppercase;letter-spacing:.06em}
+.login label{font-size:.85rem;color:#5b6675}
 .err{color:#b3261e;font-size:.9rem;margin:.3rem 0}
 .allow{font-size:.85rem;color:#5b6675;margin-top:1.5rem;border-top:1px solid #e6e9ee;
   padding-top:1rem}
 .allow code{margin-right:.3rem}
 """
+
+
+def logo_svg(px: int = 40) -> str:
+    """Inline SVG brand logo: a security shield with a verified check."""
+    return (
+        f'<svg width="{px}" height="{px}" viewBox="0 0 48 48" fill="none" '
+        f'xmlns="http://www.w3.org/2000/svg" aria-hidden="true" '
+        f'style="vertical-align:middle">'
+        f'<path d="M24 3.5 41 9.2V23c0 11-7.4 18.4-17 21.8C14.4 41.4 7 34 7 23V9.2z" '
+        f'fill="#1f6feb"/>'
+        f'<path d="M24 3.5 41 9.2V23c0 11-7.4 18.4-17 21.8z" fill="#1856c4"/>'
+        f'<path d="M15.5 24.2l6 6 11-13" stroke="#fff" stroke-width="3.2" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'</svg>')
 
 
 def render_login(error: str = "") -> str:
@@ -241,7 +261,9 @@ def render_login(error: str = "") -> str:
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>vulnscan-ai dashboard — sign in</title><style>{_STYLE}</style></head><body>
 <div class="login">
-  <h1>vulnscan&middot;ai dashboard</h1>{err}
+  <div class="brandmark">{logo_svg(40)}
+    <span class="wm">vulnscan<span class="dot">&middot;</span>ai</span></div>
+  <div class="tag">findings dashboard</div>{err}
   <form method=post action="/login">
     <label>Username</label><input type=text name=username autofocus>
     <label>Password</label><input type=password name=password>
@@ -319,7 +341,7 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>vulnscan-ai dashboard — {html.escape(host)}</title><style>{_STYLE}</style></head>
 <body>
-<header><div class="wrap"><b>vulnscan&middot;ai</b> dashboard
+<header><div class="wrap">{logo_svg(22)} <b>vulnscan&middot;ai</b> dashboard
   <span class=meta style="color:#9fb0c8">{html.escape(host)} &middot; {html.escape(scanned_at)} &middot; v{__version__}</span>
   <span class=spacer></span><a href="/logout">Sign out</a></div></header>
 <div class="wrap">

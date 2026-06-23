@@ -997,6 +997,8 @@ class TestDashboard(unittest.TestCase):
     def test_render(self):
         self.assertIn("Sign in", dashboard.render_login())
         self.assertIn("Invalid", dashboard.render_login("Invalid creds"))
+        self.assertIn("<svg", dashboard.render_login())          # brand logo present
+        self.assertIn("vulnscan", dashboard.render_login())
         f = _finding(severity="important", title="openssl update",
                      package="openssl", cve_ids=["CVE-2026-9"])
         page = dashboard.render_dashboard([f], "host1", "2026-06-23 10:00", ["10.0.0.0/24"])
