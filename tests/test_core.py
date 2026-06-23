@@ -1032,5 +1032,57 @@ class TestDashboard(unittest.TestCase):
         self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
 
 
+class TestWebrootScanner(unittest.TestCase):
+    def test_classify(self):
+        from vulnscanai.scanners.webroot import classify
+        self.assertEqual(classify("backup.sql")[1], "important")
+        self.assertEqual(classify("data.sqlite")[0], "database dump / data")
+        self.assertEqual(classify(".env")[1], "critical")
+        self.assertEqual(classify(".env.production")[1], "critical")
+        self.assertEqual(classify("wp-config.php")[1], "important")
+        self.assertEqual(classify("id_rsa")[1], "critical")
+        self.assertEqual(classify("server.key")[1], "critical")
+        self.assertEqual(classify("site.bak")[1], "moderate")
+        self.assertEqual(classify("dump.tar.gz")[1], "moderate")
+        self.assertEqual(classify("error.log")[1], "low")
+        self.assertIsNone(classify("index.php"))
+        self.assertIsNone(classify("style.css"))
+
+    def test_parsers(self):
+        from vulnscanai.scanners import webroot as W
+        self.assertEqual(W.parse_nginx_roots("server {\n root /var/www/html;\n}"),
+                         ["/var/www/html"])
+        self.assertEqual(W.parse_apache_roots('DocumentRoot "/srv/www/a"'),
+                         ["/srv/www/a"])
+        self.assertEqual(W.parse_lighttpd_roots('server.document-root = "/srv/h"'),
+                         ["/srv/h"])
+        self.assertEqual(W.parse_litespeed_roots("docRoot /var/www/ls"),
+                         ["/var/www/ls"])
+
+    def test_audit_root(self):
+        from vulnscanai.scanners.webroot import audit_root
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "index.php"), "w").close()       # normal
+            open(os.path.join(d, "backup.sql"), "w").close()      # db dump
+            open(os.path.join(d, ".env"), "w").close()            # secrets
+            os.makedirs(os.path.join(d, ".git"))
+            open(os.path.join(d, ".git", "config"), "w").close()  # must NOT descend
+            ww = os.path.join(d, "page.html")
+            open(ww, "w").close()
+            os.chmod(ww, 0o666)                                   # world-writable
+            cats = {f.raw["category"] for f in audit_root(d, "nginx")}
+            self.assertIn("database dump / data", cats)
+            self.assertIn("environment secrets", cats)
+            self.assertIn("version-control directory", cats)
+            self.assertIn("world-writable file", cats)
+            # The .git/config file itself is not separately reported (pruned).
+            paths = [f.raw["path"] for f in audit_root(d, "nginx")]
+            self.assertFalse(any(p.endswith(".git/config") for p in paths))
+
+    def test_registered(self):
+        from vulnscanai.scanners import SCANNERS
+        self.assertIn("webroot", SCANNERS)
+
+
 if __name__ == "__main__":
     unittest.main()

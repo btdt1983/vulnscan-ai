@@ -77,7 +77,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
@@ -95,6 +95,16 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > public services (HTTP/HTTPS/SSH) are not flagged. The AI picks the fix
 > (bind-to-localhost, firewall rule, or disable), transactional when it touches a
 > config/service.
+
+> **`webroot` scanner.** Finds files inside a web document root that a visitor
+> could fetch over HTTP but should never be public: database dumps (`*.sql`,
+> `*.sqlite`), env/config with secrets (`.env`, `wp-config.php`), version-control
+> dirs (`.git/`), editor/backup leftovers (`*.bak`, `*~`), archives, private keys
+> — plus world-writable files. Document roots are read from the server config
+> (nginx `root`, Apache `DocumentRoot`, lighttpd `server.document-root`, LiteSpeed
+> `docRoot`) and well-known defaults. Filesystem-only and conservative (server
+> config may still deny a path — noted per finding); the AI proposes moving/
+> deleting the file, a deny rule, or tighter permissions.
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |

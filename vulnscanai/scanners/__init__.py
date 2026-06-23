@@ -15,6 +15,7 @@ from .ports import PortScanner
 from .runtime_state import ServiceStateEnricher
 from .ssh_config import SshConfigScanner
 from .systemd_security import SystemdSecurityScanner
+from .webroot import WebrootScanner
 
 # Registry of detection scanners (not enrichers).
 SCANNERS: Dict[str, Type[Scanner]] = {
@@ -23,10 +24,11 @@ SCANNERS: Dict[str, Type[Scanner]] = {
     SshConfigScanner.name: SshConfigScanner,
     SystemdSecurityScanner.name: SystemdSecurityScanner,
     PortScanner.name: PortScanner,
+    WebrootScanner.name: WebrootScanner,
 }
 
 __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
-    "SystemdSecurityScanner", "PortScanner", "NvdEnricher",
+    "SystemdSecurityScanner", "PortScanner", "WebrootScanner", "NvdEnricher",
     "ServiceStateEnricher", "SCANNERS", "download_oval", "detect_distro",
 ]
