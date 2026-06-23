@@ -1,5 +1,10 @@
 # vulnscan-ai
 
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/btdt1983/vulnscan-ai)](https://github.com/btdt1983/vulnscan-ai/releases)
+
+**[Website](https://vulnscan-ai.techhack.nl)** · **[Install via dnf](https://repo.techhack.nl)** · **[Command reference](COMMANDS.md)** · **[Contributing](CONTRIBUTING.md)**
+
 A FIPS-aware command-line tool for **RHEL-based distributions** (RHEL,
 AlmaLinux, Rocky, CentOS Stream, Fedora) that:
 
