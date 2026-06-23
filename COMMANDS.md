@@ -124,6 +124,9 @@ vulnscan-ai scan --min-severity critical
 # Use both detection backends
 vulnscan-ai scan --scanner dnf --scanner oscap
 
+# Run every available scanner at once
+vulnscan-ai scan --all
+
 # Fully offline scan (no CVE-feed calls)
 vulnscan-ai scan --no-enrich
 
