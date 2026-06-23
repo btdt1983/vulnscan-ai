@@ -76,6 +76,14 @@ def _filter_severity(findings: List[Finding], minimum: str) -> List[Finding]:
     return [f for f in findings if severity_rank(f.severity) >= floor]
 
 
+def _select_scanners(args, cfg: Config) -> List[str]:
+    """Which scanners to run: --all (every registered one) wins, else the
+    explicit --scanner flags, else the configured default."""
+    if getattr(args, "all", False):
+        return list(SCANNERS)
+    return args.scanner or cfg.scanners
+
+
 # --------------------------------------------------------------------------- #
 # scanning
 # --------------------------------------------------------------------------- #
@@ -205,7 +213,7 @@ def cmd_info(cfg: Config, args) -> int:
 
 
 def cmd_scan(cfg: Config, args) -> int:
-    scanners = args.scanner or cfg.scanners
+    scanners = _select_scanners(args, cfg)
     print(f"Scanning {_hostname()} ...")
     had_prev = os.path.isfile(cfg.findings_path)
     previous = _load_findings_silent(cfg) if had_prev else []
@@ -264,7 +272,7 @@ def _approve(finding: Finding, auto: bool) -> str:
 def cmd_fix(cfg: Config, args) -> int:
     if args.scan:
         print(f"Scanning {_hostname()} ...")
-        findings = do_scan(cfg, args.scanner or cfg.scanners,
+        findings = do_scan(cfg, _select_scanners(args, cfg),
                            enrich=not args.no_enrich and cfg.enrich,
                            extra_ignores=getattr(args, "ignore", None))
     else:
@@ -409,7 +417,7 @@ def cmd_scheduled(cfg: Config, args) -> int:
     """
     host = _hostname()
     print(f"[{_now()}] scheduled scan on {host}")
-    scanners = args.scanner or cfg.scanners
+    scanners = _select_scanners(args, cfg)
     previous = _load_findings_silent(cfg)
     findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
@@ -519,6 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("scan", help="scan for vulnerabilities")
     sp.add_argument("--scanner", action="append",
                     help="scanner to run (repeatable): dnf, oscap, ssh, systemd, ports")
+    sp.add_argument("--all", action="store_true",
+                    help="run every available scanner (overrides --scanner)")
     sp.add_argument("--min-severity", help="floor: low|moderate|important|critical")
     sp.add_argument("--no-enrich", action="store_true",
                     help="skip CVE-feed enrichment")
@@ -534,6 +544,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--scan", action="store_true",
                     help="scan first instead of using saved findings")
     sp.add_argument("--scanner", action="append")
+    sp.add_argument("--all", action="store_true",
+                    help="with --scan: run every available scanner")
     sp.add_argument("--no-enrich", action="store_true")
     sp.add_argument("--min-severity")
     sp.add_argument("--yes", action="store_true",
@@ -580,6 +592,8 @@ def build_parser() -> argparse.ArgumentParser:
         "scheduled",
         help="non-interactive scan + dated report (for systemd timer/cron)")
     sp.add_argument("--scanner", action="append")
+    sp.add_argument("--all", action="store_true",
+                    help="run every available scanner")
     sp.add_argument("--no-enrich", action="store_true")
     sp.add_argument("--min-severity")
     sp.add_argument("--plan", action="store_true",

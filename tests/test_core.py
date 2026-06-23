@@ -937,5 +937,32 @@ class TestNotify(unittest.TestCase):
         self.assertIn("critical: 1", body)    # severity tally appears
 
 
+class TestSelectScanners(unittest.TestCase):
+    def _args(self, **kw):
+        import argparse
+        ns = argparse.Namespace(all=False, scanner=None)
+        for k, v in kw.items():
+            setattr(ns, k, v)
+        return ns
+
+    def test_all_overrides_everything(self):
+        from vulnscanai.cli import _select_scanners
+        from vulnscanai.scanners import SCANNERS
+        sel = _select_scanners(self._args(all=True, scanner=["ssh"]),
+                               Config(scanners=["dnf"]))
+        self.assertEqual(set(sel), set(SCANNERS))
+
+    def test_explicit_scanner_flags(self):
+        from vulnscanai.cli import _select_scanners
+        sel = _select_scanners(self._args(scanner=["ssh", "ports"]),
+                               Config(scanners=["dnf"]))
+        self.assertEqual(sel, ["ssh", "ports"])
+
+    def test_default_from_config(self):
+        from vulnscanai.cli import _select_scanners
+        self.assertEqual(_select_scanners(self._args(), Config(scanners=["dnf"])),
+                         ["dnf"])
+
+
 if __name__ == "__main__":
     unittest.main()

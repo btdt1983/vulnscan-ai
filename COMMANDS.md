@@ -77,6 +77,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 | Option | Description |
 |---|---|
 | `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure). Default: from config (`dnf`). |
+| `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
 > default: only `UNSAFE` units at/above exposure `9.0`, excluding un-hardenable/
@@ -163,6 +164,7 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 |---|---|
 | `--scan` | Scan first instead of using the last saved findings. |
 | `--scanner NAME` | Scanner(s) to use when `--scan` is given (repeatable). |
+| `--all` | With `--scan`: run every available scanner. |
 | `--no-enrich` | Skip CVE-feed enrichment when `--scan` is given. |
 | `--min-severity SEV` | Only act on findings at/above this severity. |
 | `--yes` | Auto-approve every (screened) fix — non-interactive. |
@@ -315,6 +317,7 @@ vulnscan-ai scheduled [--scanner NAME]... [--no-enrich] [--min-severity SEV]
 | Option | Description |
 |---|---|
 | `--scanner NAME` | Scanner(s) to run (repeatable). |
+| `--all` | Run every available scanner (overrides `--scanner`). |
 | `--no-enrich` | Skip CVE-feed enrichment. |
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--plan` | Embed AI remediation proposals in the report (no execution). |
