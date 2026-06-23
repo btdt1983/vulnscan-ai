@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.11
+Version:        0.1.12
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -99,6 +99,12 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.12-1
+- Relicensed from Apache-2.0 to AGPL-3.0-or-later. The package now ships the
+  AGPL-3.0 LICENSE and all sources carry SPDX headers. Contributions are
+  accepted under a CLA so the project can also be offered commercially.
+- No functional change to scanning or remediation.
+
 * Mon Jun 22 2026 vulnscan-ai <noreply@example.invalid> - 0.1.11-1
 - Runtime-exposure filter: a vulnerable daemon package whose systemd
   service/socket units are all stopped AND disabled/masked is downgraded
