@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.12
+Version:        0.1.13
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -99,6 +99,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}.timer
 
 %changelog
+* Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.13-1
+- Branded startup banner (MOTD) on interactive runs; suppressed for pipes,
+  machine output, scheduled runs and via --no-banner / VULNSCANAI_NO_BANNER.
+- Scan drift: scan and scheduled report what is new vs resolved since the
+  previous saved scan.
+- Email notifications: a scheduled scan can email a summary when findings
+  reach a severity or new ones appear (SMTP config + setup-wizard section;
+  password via VULNSCANAI_SMTP_PASSWORD). A failed mail never breaks a scan.
+
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.12-1
 - Relicensed from Apache-2.0 to AGPL-3.0-or-later. The package now ships the
   AGPL-3.0 LICENSE and all sources carry SPDX headers. Contributions are
