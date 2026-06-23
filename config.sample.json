@@ -18,5 +18,10 @@
   "smtp_port": 25,
   "smtp_from": null,
   "smtp_user": null,
-  "smtp_starttls": false
+  "smtp_starttls": false,
+
+  "dashboard_user": "admin",
+  "dashboard_port": 6666,
+  "dashboard_bind": "127.0.0.1",
+  "dashboard_allow": []
 }

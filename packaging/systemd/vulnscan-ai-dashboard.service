@@ -1,0 +1,29 @@
+[Unit]
+Description=vulnscan-ai HTTPS findings dashboard
+Documentation=man:vulnscan-ai(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# State dir (/var/lib/vulnscan-ai) and any overrides.
+EnvironmentFile=-/etc/vulnscan-ai/vulnscan-ai.env
+# Set the admin password first:  sudo vulnscan-ai dashboard --set-password
+# The dashboard refuses to start until a password is configured. It binds to
+# localhost only unless an allow-list is set (dashboard --allow / the UI).
+ExecStart=/usr/bin/vulnscan-ai --no-banner dashboard
+Restart=on-failure
+RestartSec=5
+
+# Hardening. ProtectHome is intentionally NOT set: the service reads its own
+# config (password hash, allow-list) from root's config dir.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/vulnscan-ai
+
+[Install]
+WantedBy=multi-user.target

@@ -54,6 +54,14 @@ class Config:
     smtp_user: Optional[str] = None           # set to enable SMTP auth
     smtp_password: Optional[str] = None       # prefer VULNSCANAI_SMTP_PASSWORD
     smtp_starttls: bool = False
+    # Web dashboard (vulnscan-ai dashboard).
+    dashboard_user: str = "admin"
+    dashboard_password_hash: Optional[str] = None  # set via --set-password
+    dashboard_port: int = 6666
+    dashboard_bind: str = "127.0.0.1"               # localhost unless allow-list
+    dashboard_allow: List[str] = field(default_factory=list)  # client IPs/CIDRs
+    dashboard_cert: Optional[str] = None            # default: <state_dir>/dashboard-cert.pem
+    dashboard_key: Optional[str] = None             # default: <state_dir>/dashboard-key.pem
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod

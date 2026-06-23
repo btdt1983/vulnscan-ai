@@ -492,6 +492,56 @@ def cmd_setup(cfg: Config, args) -> int:
     return run_setup(cfg, force=True)
 
 
+def cmd_dashboard(cfg: Config, args) -> int:
+    from . import dashboard as D
+    if args.set_password:
+        import getpass
+        try:
+            pw = getpass.getpass("New dashboard password: ")
+            pw2 = getpass.getpass("Repeat password: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if not pw or pw != pw2:
+            _eprint("Passwords are empty or do not match.")
+            return 1
+        user = args.user or cfg.dashboard_user
+        path = cfg.write_user_config({"dashboard_password_hash": D.hash_password(pw),
+                                      "dashboard_user": user})
+        print(f"Dashboard password set for user '{user}'. Saved to {path}")
+        return 0
+    if args.allow or args.deny:
+        allow = list(cfg.dashboard_allow)
+        for ip in (args.allow or []):
+            if not D.valid_allow_entry(ip):
+                _eprint(f"  ! invalid IP/CIDR, skipping: {ip}")
+            elif ip not in allow:
+                allow.append(ip)
+        for ip in (args.deny or []):
+            if ip in allow:
+                allow.remove(ip)
+        path = cfg.write_user_config({"dashboard_allow": allow})
+        print(f"Allowed network clients: {allow or '(localhost only)'}")
+        print(f"Saved to {path}")
+        return 0
+    if args.list:
+        pw = "set" if cfg.dashboard_password_hash else "NOT set (run --set-password)"
+        print(f"user:     {cfg.dashboard_user}")
+        print(f"password: {pw}")
+        print(f"port:     {cfg.dashboard_port}")
+        print(f"bind:     {cfg.dashboard_bind}  (auto 0.0.0.0 when an allow-list is set)")
+        print(f"allow:    {cfg.dashboard_allow or '(localhost only)'}")
+        return 0
+    try:
+        return D.serve(cfg, port=args.port, bind=args.bind)
+    except D.DashboardError as exc:
+        _eprint(str(exc))
+        return 1
+    except OSError as exc:
+        _eprint(f"dashboard failed to start: {exc}")
+        return 1
+
+
 def cmd_providers(cfg: Config, args) -> int:
     for name, cls in PROVIDERS.items():
         inst = cls()
@@ -605,6 +655,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--fail-on", metavar="SEVERITY",
                     help="exit 3 if any finding is at/above this severity")
     sp.set_defaults(func=cmd_scheduled)
+
+    sp = sub.add_parser("dashboard",
+                        help="serve saved findings over an HTTPS login dashboard")
+    sp.add_argument("--set-password", action="store_true",
+                    help="set the admin password (prompts), then exit")
+    sp.add_argument("--user", help="admin username (default: admin)")
+    sp.add_argument("--allow", action="append", metavar="IP/CIDR",
+                    help="permit a network client besides localhost (repeatable), then exit")
+    sp.add_argument("--deny", action="append", metavar="IP/CIDR",
+                    help="remove a permitted client (repeatable), then exit")
+    sp.add_argument("--list", action="store_true",
+                    help="show dashboard settings, then exit")
+    sp.add_argument("--port", type=int, help="listen port (default: 6666)")
+    sp.add_argument("--bind",
+                    help="bind address (default: 127.0.0.1; auto 0.0.0.0 with an allow-list)")
+    sp.set_defaults(func=cmd_dashboard)
     return p
 
 

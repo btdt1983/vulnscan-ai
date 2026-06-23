@@ -55,6 +55,7 @@ dependency. A systemd timer provides daily unattended scan-and-report.
 # systemd units
 install -D -m0644 packaging/systemd/%{name}.service %{buildroot}%{_unitdir}/%{name}.service
 install -D -m0644 packaging/systemd/%{name}.timer   %{buildroot}%{_unitdir}/%{name}.timer
+install -D -m0644 packaging/systemd/%{name}-dashboard.service %{buildroot}%{_unitdir}/%{name}-dashboard.service
 
 # configuration
 install -D -m0644 packaging/config.json       %{buildroot}%{_sysconfdir}/%{name}/config.json
@@ -83,6 +84,7 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %{_datadir}/zsh/site-functions/_%{name}
 %{_unitdir}/%{name}.service
 %{_unitdir}/%{name}.timer
+%{_unitdir}/%{name}-dashboard.service
 %dir %{_sysconfdir}/%{name}
 %config(noreplace) %{_sysconfdir}/%{name}/config.json
 %config(noreplace) %attr(0640,root,root) %{_sysconfdir}/%{name}/%{name}.env
@@ -91,12 +93,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 
 %post
 %systemd_post %{name}.timer
+%systemd_post %{name}-dashboard.service
 
 %preun
 %systemd_preun %{name}.timer
+%systemd_preun %{name}-dashboard.service
 
 %postun
 %systemd_postun_with_restart %{name}.timer
+%systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.13-1

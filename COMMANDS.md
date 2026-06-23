@@ -21,6 +21,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 | [`setup`](#setup) | First-run wizard: pick & download an offline AI model |
 | [`update-oval`](#update-oval) | Download the OpenSCAP OVAL feed for this distro |
 | [`scheduled`](#scheduled) | Non-interactive scan + dated report (systemd timer/cron) |
+| [`dashboard`](#dashboard) | Serve saved findings over an HTTPS login dashboard |
 
 ---
 
@@ -342,6 +343,39 @@ vulnscan-ai scheduled --fail-on important   # exit 3 if any >= important
 
 # Enable the daily timer (installed by the RPM)
 sudo systemctl enable --now vulnscan-ai.timer
+```
+
+---
+
+## `dashboard`
+
+Serve the saved findings over a small HTTPS web UI behind a login. stdlib only,
+self-signed certificate on first run, a single admin account.
+
+```
+vulnscan-ai dashboard [--port N] [--bind ADDR]
+vulnscan-ai dashboard --set-password [--user NAME]
+vulnscan-ai dashboard --allow IP/CIDR ... | --deny IP/CIDR ... | --list
+```
+
+| Option | Description |
+|---|---|
+| `--set-password` | Prompt for and store the admin password (PBKDF2-SHA256), then exit. |
+| `--user NAME` | Admin username (default `admin`). |
+| `--allow IP/CIDR` | Permit a network client besides localhost (repeatable), then exit. |
+| `--deny IP/CIDR` | Remove a permitted client (repeatable), then exit. |
+| `--list` | Show user / port / bind / allow-list, then exit. |
+| `--port N` | Listen port (default `6666`). |
+| `--bind ADDR` | Bind address (default `127.0.0.1`; auto `0.0.0.0` when an allow-list is set). |
+
+Refuses to start until a password is set. Binds to localhost only unless an
+allow-list opens it to specific network clients; loopback is always allowed.
+Also serves `GET /api/findings.json` (authenticated). Run it as a service with
+`systemctl enable --now vulnscan-ai-dashboard`.
+
+```bash
+sudo vulnscan-ai dashboard --set-password
+ssh -L 6666:localhost:6666 host    # then browse https://localhost:6666/
 ```
 
 ---

@@ -13,7 +13,7 @@ from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 import io
 
-from vulnscanai import branding, notify
+from vulnscanai import branding, dashboard, notify
 from vulnscanai.config import Config
 from vulnscanai.models import (
     Finding, Remediation, apply_ignores, apply_service_states,
@@ -962,6 +962,54 @@ class TestSelectScanners(unittest.TestCase):
         from vulnscanai.cli import _select_scanners
         self.assertEqual(_select_scanners(self._args(), Config(scanners=["dnf"])),
                          ["dnf"])
+
+
+class TestDashboard(unittest.TestCase):
+    def test_password_hash_roundtrip(self):
+        h = dashboard.hash_password("s3cret!")
+        self.assertTrue(h.startswith("pbkdf2_sha256$"))
+        self.assertTrue(dashboard.verify_password("s3cret!", h))
+        self.assertFalse(dashboard.verify_password("nope", h))
+        self.assertFalse(dashboard.verify_password("x", "garbage"))
+
+    def test_client_allowlist(self):
+        self.assertTrue(dashboard.client_allowed("127.0.0.1", []))   # loopback always
+        self.assertTrue(dashboard.client_allowed("::1", []))
+        self.assertTrue(dashboard.client_allowed("10.0.0.5", ["10.0.0.0/24"]))
+        self.assertFalse(dashboard.client_allowed("8.8.8.8", ["10.0.0.0/24"]))
+        self.assertFalse(dashboard.client_allowed("10.0.0.5", []))   # not loopback
+        self.assertFalse(dashboard.client_allowed("not-an-ip", ["10.0.0.0/24"]))
+
+    def test_valid_allow_entry(self):
+        self.assertTrue(dashboard.valid_allow_entry("192.168.1.10"))
+        self.assertTrue(dashboard.valid_allow_entry("10.0.0.0/8"))
+        self.assertFalse(dashboard.valid_allow_entry("banana"))
+
+    def test_sessions(self):
+        s = dashboard._Sessions()
+        tok = s.create()
+        self.assertTrue(s.valid(tok))
+        self.assertFalse(s.valid("bogus"))
+        self.assertFalse(s.valid(None))
+        s.drop(tok)
+        self.assertFalse(s.valid(tok))
+
+    def test_render(self):
+        self.assertIn("Sign in", dashboard.render_login())
+        self.assertIn("Invalid", dashboard.render_login("Invalid creds"))
+        f = _finding(severity="important", title="openssl update",
+                     package="openssl", cve_ids=["CVE-2026-9"])
+        page = dashboard.render_dashboard([f], "host1", "2026-06-23 10:00", ["10.0.0.0/24"])
+        self.assertIn("openssl update", page)
+        self.assertIn("important", page)
+        self.assertIn("CVE-2026-9", page)
+        self.assertIn("10.0.0.0/24", page)
+
+    def test_render_escapes_html(self):
+        f = _finding(title="<script>alert(1)</script>", package=None, cve_ids=[])
+        page = dashboard.render_dashboard([f], "h", "now", [])
+        self.assertNotIn("<script>alert(1)</script>", page)
+        self.assertIn("&lt;script&gt;", page)
 
 
 if __name__ == "__main__":

@@ -322,6 +322,37 @@ The SMTP password is read from `VULNSCANAI_SMTP_PASSWORD` (preferred) or
 `smtp_password` in the config. Sending never breaks a scan — a failed mail is
 logged and the run continues. With no `notify_email` set, nothing is sent.
 
+## Dashboard (HTTPS, login)
+
+`vulnscan-ai dashboard` serves the saved findings — with their explanations,
+CVEs and any AI fix plan — over a small HTTPS web UI behind a login. It is
+stdlib-only (no extra packages), uses a self-signed certificate generated on
+first run, and a single admin account (PBKDF2-SHA256 password hash).
+
+```bash
+# 1. Set the admin password (stored hashed)
+sudo vulnscan-ai dashboard --set-password
+
+# 2. Run it (foreground), or enable the service
+sudo vulnscan-ai dashboard                 # https://<host>:6666/
+sudo systemctl enable --now vulnscan-ai-dashboard
+```
+
+By default it **binds to localhost only** — reach it with an SSH tunnel
+(`ssh -L 6666:localhost:6666 host`). To let specific machines in, add them to
+the allow-list (from the CLI or the dashboard itself); the server then also
+listens on the network, but **only** the allow-listed clients (and localhost)
+are served:
+
+```bash
+sudo vulnscan-ai dashboard --allow 10.0.0.0/24 --allow 192.168.1.5
+sudo vulnscan-ai dashboard --list            # show user/port/bind/allow-list
+```
+
+It refuses to start until a password is set, so findings are never exposed
+unauthenticated. Port (`--port`, default 6666) and bind address (`--bind`) are
+overridable.
+
 ## Safety model
 
 - The model **only proposes** commands; it never executes anything itself.
