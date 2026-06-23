@@ -89,7 +89,7 @@ def _recommended_index(budget_gb: float) -> int:
     return best
 
 
-def run_setup(config, *, force: bool = False) -> int:
+def _setup_model(config, *, force: bool = False) -> int:
     """Interactive model picker. Returns a process exit code (0 = fine)."""
     print("=" * 64)
     print(" vulnscan-ai setup — offline AI model")
@@ -179,6 +179,61 @@ def run_setup(config, *, force: bool = False) -> int:
     print("Try it:  vulnscan-ai scan  &&  vulnscan-ai fix --dry-run")
     print("=" * 64)
     return 0
+
+
+def _configure_notifications(config) -> None:
+    """Optional: set up email summaries for scheduled scans."""
+    print("\n" + "-" * 64)
+    print(" Email notifications (optional)")
+    print("-" * 64)
+    print("A scheduled scan can email a summary when findings appear.")
+    if not _ask_yes("Configure email notifications now?"):
+        if getattr(config, "notify_email", None):
+            print(f"Keeping existing recipient: {config.notify_email}")
+        else:
+            print("Skipped. Configure later with 'vulnscan-ai setup'.")
+        return
+
+    email = _ask("  Send reports to (recipient email): ")
+    if not email:
+        print("  No address entered; skipping email setup.")
+        return
+    smtp_host = _ask("  SMTP server host [localhost]: ") or "localhost"
+    try:
+        smtp_port = int(_ask("  SMTP server port [25]: ") or "25")
+    except ValueError:
+        smtp_port = 25
+    sender = _ask(f"  From address [{email}]: ") or email
+    min_sev = _ask("  Notify on severity at/above "
+                   "[important]: ") or "important"
+    starttls = _ask_yes("  Use STARTTLS (encrypted submission)?")
+    updates = {
+        "notify_email": email, "smtp_host": smtp_host, "smtp_port": smtp_port,
+        "smtp_from": sender, "notify_min_severity": min_sev,
+        "smtp_starttls": starttls,
+    }
+    user = _ask("  SMTP username (blank = no authentication): ")
+    if user:
+        updates["smtp_user"] = user
+        import getpass
+        try:
+            pw = getpass.getpass("  SMTP password (stored 0600; blank to keep "
+                                 "in $VULNSCANAI_SMTP_PASSWORD): ")
+        except (EOFError, KeyboardInterrupt):
+            pw = ""
+        if pw:
+            updates["smtp_password"] = pw
+    path = config.write_user_config(updates)
+    print(f"  Saved email settings to {path}")
+    print("  Test it with:  vulnscan-ai scheduled")
+
+
+def run_setup(config, *, force: bool = False) -> int:
+    """Run the model picker, then offer email-notification setup."""
+    code = _setup_model(config, force=force)
+    _configure_notifications(config)
+    config.mark_setup_done()
+    return code
 
 
 def should_offer_setup(config, command: Optional[str]) -> bool:

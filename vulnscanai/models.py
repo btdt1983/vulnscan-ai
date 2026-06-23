@@ -286,6 +286,21 @@ def apply_service_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
     return findings, downgraded
 
 
+def diff_findings(old: List[Finding],
+                  new: List[Finding]) -> Tuple[List[Finding], List[Finding]]:
+    """Compare two scans by stable finding id.
+
+    Returns (added, resolved): findings present in `new` but not `old`, and
+    findings present in `old` but not `new`. Used to surface drift between the
+    previous saved scan and the current one.
+    """
+    old_ids = {f.id for f in old}
+    new_ids = {f.id for f in new}
+    added = [f for f in new if f.id not in old_ids]
+    resolved = [f for f in old if f.id not in new_ids]
+    return added, resolved
+
+
 def findings_to_json(findings: List[Finding], indent: int = 2) -> str:
     return json.dumps([f.to_dict() for f in findings], indent=indent, sort_keys=True)
 

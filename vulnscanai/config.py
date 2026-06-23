@@ -45,6 +45,15 @@ class Config:
     timeout: int = 30
     reports_dir: Optional[str] = None        # default: <state_dir>/reports
     ignore: List[str] = field(default_factory=list)  # baseline suppression
+    # Email notifications for scheduled scans (configured via the wizard).
+    notify_email: Optional[str] = None       # recipient; enables email when set
+    notify_min_severity: str = "important"   # email only if findings >= this
+    smtp_host: str = "localhost"
+    smtp_port: int = 25
+    smtp_from: Optional[str] = None           # default: notify_email
+    smtp_user: Optional[str] = None           # set to enable SMTP auth
+    smtp_password: Optional[str] = None       # prefer VULNSCANAI_SMTP_PASSWORD
+    smtp_starttls: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -99,6 +108,10 @@ class Config:
         if env.get("VULNSCANAI_IGNORE"):
             self.ignore.extend(p.strip() for p in
                                env["VULNSCANAI_IGNORE"].split(",") if p.strip())
+        if env.get("VULNSCANAI_NOTIFY_EMAIL"):
+            self.notify_email = env["VULNSCANAI_NOTIFY_EMAIL"]
+        if env.get("VULNSCANAI_SMTP_PASSWORD"):
+            self.smtp_password = env["VULNSCANAI_SMTP_PASSWORD"]
 
     def ensure_state_dir(self) -> str:
         os.makedirs(self.state_dir, mode=0o700, exist_ok=True)

@@ -10,5 +10,13 @@
   "redhat_api": "https://access.redhat.com/hydra/rest/securitydata",
   "nvd_api": "https://services.nvd.nist.gov/rest/json/cves/2.0",
   "nvd_api_key": null,
-  "ignore": ["CVE-2024-0001", "RHSA-2024:1234", "kernel*"]
+  "ignore": ["CVE-2024-0001", "RHSA-2024:1234", "kernel*"],
+
+  "notify_email": null,
+  "notify_min_severity": "important",
+  "smtp_host": "localhost",
+  "smtp_port": 25,
+  "smtp_from": null,
+  "smtp_user": null,
+  "smtp_starttls": false
 }

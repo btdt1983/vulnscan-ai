@@ -11,9 +11,13 @@ import unittest
 
 from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
+import io
+
+from vulnscanai import branding, notify
+from vulnscanai.config import Config
 from vulnscanai.models import (
     Finding, Remediation, apply_ignores, apply_service_states,
-    apply_vendor_states, dedup_cross_scanner, findings_from_json,
+    apply_vendor_states, dedup_cross_scanner, diff_findings, findings_from_json,
     findings_to_json, match_ignore, merge_findings, severity_rank,
 )
 from vulnscanai.scanners.runtime_state import ServiceStateEnricher
@@ -804,6 +808,133 @@ class TestWizardConfig(unittest.TestCase):
             c.mark_setup_done()
             self.assertTrue(c.is_setup_done())
             self.assertFalse(should_offer_setup(c, "scan"))
+
+
+class TestScanDiff(unittest.TestCase):
+    def test_added_and_resolved(self):
+        a = _finding(cve_ids=["CVE-2026-0001"], package="bash")
+        b = _finding(cve_ids=["CVE-2026-0002"], package="openssl")
+        c = _finding(cve_ids=["CVE-2026-0003"], package="curl")
+        added, resolved = diff_findings([a, b], [b, c])
+        self.assertEqual([f.package for f in added], ["curl"])
+        self.assertEqual([f.package for f in resolved], ["bash"])
+
+    def test_no_change(self):
+        a = _finding()
+        self.assertEqual(diff_findings([a], [a]), ([], []))
+
+    def test_first_scan(self):
+        a = _finding()
+        added, resolved = diff_findings([], [a])
+        self.assertEqual(len(added), 1)
+        self.assertEqual(resolved, [])
+
+
+class _TTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
+class TestBanner(unittest.TestCase):
+    def setUp(self):
+        os.environ.pop("VULNSCANAI_NO_BANNER", None)
+
+    def test_banner_plain_for_non_tty(self):
+        s = branding.banner("h1", stream=io.StringIO())
+        self.assertIn("V U L N S C A N · A I", s)
+        self.assertIn("h1", s)
+        self.assertNotIn("\033", s)  # no ANSI colour on a non-tty stream
+
+    def test_print_banner_suppressed_when_not_tty(self):
+        buf = io.StringIO()
+        branding.print_banner("scan", "h", stream=buf)
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_print_banner_suppressed_for_scheduled(self):
+        buf = _TTY()
+        branding.print_banner("scheduled", "h", stream=buf)
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_print_banner_suppressed_by_env(self):
+        os.environ["VULNSCANAI_NO_BANNER"] = "1"
+        buf = _TTY()
+        branding.print_banner("scan", "h", stream=buf)
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_print_banner_shows_on_tty(self):
+        buf = _TTY()
+        branding.print_banner("scan", "myhost", stream=buf)
+        self.assertIn("V U L N S C A N · A I", buf.getvalue())
+
+
+class _FakeSMTP:
+    instances = []
+
+    def __init__(self, host, port, timeout=0):
+        self.host, self.port = host, port
+        self.started = False
+        self.creds = None
+        self.messages = []
+        _FakeSMTP.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def starttls(self, context=None):
+        self.started = True
+
+    def login(self, user, password):
+        self.creds = (user, password)
+
+    def send_message(self, msg):
+        self.messages.append(msg)
+
+
+class TestNotify(unittest.TestCase):
+    def _cfg(self, **kw):
+        c = Config()
+        for k, v in kw.items():
+            setattr(c, k, v)
+        return c
+
+    def test_not_sent_without_recipient(self):
+        sent, _info = notify.send_scan_email(
+            self._cfg(), [_finding()], [], [], "h", "now")
+        self.assertFalse(sent)
+
+    def test_not_sent_when_below_threshold_and_no_new(self):
+        cfg = self._cfg(notify_email="a@b.c", notify_min_severity="critical")
+        sent, _info = notify.send_scan_email(
+            cfg, [_finding(severity="low")], [], [], "h", "now")
+        self.assertFalse(sent)
+
+    def test_sent_with_auth_and_starttls(self):
+        cfg = self._cfg(notify_email="ops@example.com",
+                        notify_min_severity="important", smtp_starttls=True,
+                        smtp_user="u", smtp_password="p", smtp_host="mail.local")
+        f = _finding(severity="critical", title="bad", package="openssl")
+        _FakeSMTP.instances = []
+        orig = notify.smtplib.SMTP
+        notify.smtplib.SMTP = _FakeSMTP
+        try:
+            sent, info = notify.send_scan_email(cfg, [f], [f], [], "host1", "now")
+        finally:
+            notify.smtplib.SMTP = orig
+        self.assertTrue(sent, info)
+        self.assertEqual(len(_FakeSMTP.instances), 1)
+        srv = _FakeSMTP.instances[0]
+        self.assertTrue(srv.started)
+        self.assertEqual(srv.creds, ("u", "p"))
+        self.assertEqual(len(srv.messages), 1)
+        msg = srv.messages[0]
+        self.assertEqual(msg["To"], "ops@example.com")
+        body = msg.get_content()
+        self.assertIn("host1", body)
+        self.assertIn("bad", body)            # finding title appears
+        self.assertIn("critical: 1", body)    # severity tally appears
 
 
 if __name__ == "__main__":

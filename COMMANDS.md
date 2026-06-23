@@ -32,6 +32,7 @@ These go **before** the command.
 |---|---|
 | `-h`, `--help` | Show help (works after any command too) |
 | `--version` | Print the version and exit |
+| `--no-banner` | Suppress the startup banner (also via `VULNSCANAI_NO_BANNER`) |
 | `--config CONFIG` | Path to a config JSON (overrides the default search) |
 | `--state-dir STATE_DIR` | Override the state/cache directory |
 | `--provider PROVIDER` | AI provider: `claude` \| `openai` \| `gemini` \| `kimi` \| `deepseek` \| `mistral` \| `local` |

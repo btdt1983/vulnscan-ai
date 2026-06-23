@@ -17,10 +17,11 @@ from . import __version__, export_fix, remediation
 from .ai import PROVIDERS, ProviderError, get_provider
 from .config import Config
 from .fips import status_line
+from .branding import print_banner
 from .models import (
     Finding, apply_ignores, apply_service_states, apply_vendor_states,
-    dedup_cross_scanner, findings_from_json, findings_to_json, merge_findings,
-    severity_rank,
+    dedup_cross_scanner, diff_findings, findings_from_json, findings_to_json,
+    merge_findings, severity_rank,
 )
 from .report import write_report
 from .scanners import (
@@ -144,6 +145,36 @@ def _load_findings(cfg: Config) -> List[Finding]:
         return findings_from_json(fh.read())
 
 
+def _load_findings_silent(cfg: Config) -> List[Finding]:
+    """Load the previously-saved findings, or [] if none/unreadable (no output)."""
+    try:
+        with open(cfg.findings_path, "r", encoding="utf-8") as fh:
+            return findings_from_json(fh.read())
+    except (OSError, ValueError):
+        return []
+
+
+def _print_diff(added: List[Finding], resolved: List[Finding]) -> None:
+    """Show drift relative to the previous scan."""
+    if not added and not resolved:
+        print("No change since the last scan.")
+        return
+    parts = []
+    if added:
+        parts.append(f"{len(added)} new")
+    if resolved:
+        parts.append(f"{len(resolved)} resolved")
+    print("Since last scan: " + ", ".join(parts))
+    for f in added[:10]:
+        print(f"  + [{f.severity}] {(f.package or f.title)[:60]}")
+    if len(added) > 10:
+        print(f"  + ... and {len(added) - 10} more new")
+    for f in resolved[:10]:
+        print(f"  - resolved: {(f.package or f.title)[:60]}")
+    if len(resolved) > 10:
+        print(f"  - ... and {len(resolved) - 10} more resolved")
+
+
 # --------------------------------------------------------------------------- #
 # command handlers
 # --------------------------------------------------------------------------- #
@@ -176,12 +207,17 @@ def cmd_info(cfg: Config, args) -> int:
 def cmd_scan(cfg: Config, args) -> int:
     scanners = args.scanner or cfg.scanners
     print(f"Scanning {_hostname()} ...")
+    had_prev = os.path.isfile(cfg.findings_path)
+    previous = _load_findings_silent(cfg) if had_prev else []
     findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich,
                        extra_ignores=args.ignore)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
     _save_findings(cfg, findings)
     print()
     _print_findings(findings)
+    if had_prev:
+        added, resolved = diff_findings(previous, findings)
+        _print_diff(added, resolved)
     print(f"\nSaved to {cfg.findings_path}")
     for target in (args.pdf, args.json, args.sarif):
         if target:
@@ -374,9 +410,12 @@ def cmd_scheduled(cfg: Config, args) -> int:
     host = _hostname()
     print(f"[{_now()}] scheduled scan on {host}")
     scanners = args.scanner or cfg.scanners
+    previous = _load_findings_silent(cfg)
     findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
+    added, resolved = diff_findings(previous, findings)
     _save_findings(cfg, findings)
+    print(f"  drift: {len(added)} new, {len(resolved)} resolved since last scan")
 
     if args.plan and findings:
         provider = get_provider(args.provider or cfg.provider,
@@ -403,6 +442,12 @@ def cmd_scheduled(cfg: Config, args) -> int:
     removed = _rotate_reports(reports_dir, args.keep)
     if removed:
         print(f"  rotated out {removed} old report(s)")
+
+    # Email summary (only when configured and there is something worth sending).
+    if cfg.notify_email:
+        from .notify import send_scan_email
+        sent, info = send_scan_email(cfg, findings, added, resolved, host, _now())
+        print(f"  email: {info}")
 
     # Optional non-zero exit so monitoring can alert on severe findings.
     if args.fail_on:
@@ -459,6 +504,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version",
                    version=f"vulnscan-ai {__version__}")
+    p.add_argument("--no-banner", action="store_true",
+                   help="suppress the startup banner")
     p.add_argument("--config", help="path to config JSON")
     p.add_argument("--state-dir", help="override state/cache directory")
     p.add_argument("--provider",
@@ -561,6 +608,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     cfg = Config.load(args.config)
     _apply_overrides(cfg, args)
+
+    if getattr(args, "no_banner", False):
+        os.environ["VULNSCANAI_NO_BANNER"] = "1"
+    print_banner(getattr(args, "command", None), _hostname())
 
     # First run on an interactive terminal: offer the offline-model wizard,
     # then reload config so the just-made choice applies to this command.

@@ -288,6 +288,34 @@ Scan-only runs need no API key and send nothing off the host. To enable
 `--plan`, put a key in `/etc/vulnscan-ai/vulnscan-ai.env` (mode 0640) and add
 `--plan` to `ExecStart` (override with `systemctl edit vulnscan-ai.service`).
 
+### Drift between scans
+
+Every `scan` compares against the previously saved findings and prints what is
+**new** and what is **resolved** since the last run, so you can see a host's
+posture move over time. `scheduled` reports the same drift counts.
+
+### Email notifications
+
+A scheduled scan can email a plain-text summary when it finds anything at or
+above a severity, or anything new since the last scan. Configure it in the
+wizard (`vulnscan-ai setup` → *Email notifications*) or in the config:
+
+```json
+{
+  "notify_email": "ops@example.com",
+  "notify_min_severity": "important",
+  "smtp_host": "smtp.example.com",
+  "smtp_port": 587,
+  "smtp_from": "vulnscan-ai@example.com",
+  "smtp_user": "vulnscan-ai",
+  "smtp_starttls": true
+}
+```
+
+The SMTP password is read from `VULNSCANAI_SMTP_PASSWORD` (preferred) or
+`smtp_password` in the config. Sending never breaks a scan — a failed mail is
+logged and the run continues. With no `notify_email` set, nothing is sent.
+
 ## Safety model
 
 - The model **only proposes** commands; it never executes anything itself.
