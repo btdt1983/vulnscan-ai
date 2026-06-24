@@ -1,6 +1,7 @@
 {
   "provider": "claude",
   "model": null,
+  "claude_effort": null,
   "scanners": ["dnf"],
   "min_severity": "low",
   "enrich": true,

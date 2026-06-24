@@ -31,6 +31,7 @@ DEFAULT_STATE_DIR = os.path.expanduser("~/.local/state/vulnscan-ai")
 class Config:
     provider: str = DEFAULT_PROVIDER
     model: Optional[str] = None              # provider default if None
+    claude_effort: Optional[str] = None      # Claude reasoning effort: low|medium|high|xhigh|max
     scanners: List[str] = field(default_factory=lambda: ["dnf"])
     state_dir: str = DEFAULT_STATE_DIR
     min_severity: str = "low"                # low|moderate|important|critical
@@ -109,6 +110,8 @@ class Config:
             self.provider = env["VULNSCANAI_PROVIDER"]
         if env.get("VULNSCANAI_MODEL"):
             self.model = env["VULNSCANAI_MODEL"]
+        if env.get("VULNSCANAI_CLAUDE_EFFORT"):
+            self.claude_effort = env["VULNSCANAI_CLAUDE_EFFORT"]
         if env.get("VULNSCANAI_STATE_DIR"):
             self.state_dir = env["VULNSCANAI_STATE_DIR"]
         if env.get("NVD_API_KEY"):

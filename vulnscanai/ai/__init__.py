@@ -27,13 +27,14 @@ PROVIDERS: Dict[str, Type[AIProvider]] = {
 
 
 def get_provider(name: str, model: Optional[str] = None,
-                 timeout: int = 60) -> AIProvider:
+                 timeout: int = 60,
+                 effort: Optional[str] = None) -> AIProvider:
     key = (name or "").lower()
     if key not in PROVIDERS:
         raise ProviderError(
             f"unknown provider {name!r}; choose from {sorted(PROVIDERS)}"
         )
-    return PROVIDERS[key](model=model, timeout=timeout)
+    return PROVIDERS[key](model=model, timeout=timeout, effort=effort)
 
 
 __all__ = [

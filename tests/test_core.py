@@ -1032,6 +1032,46 @@ class TestDashboard(unittest.TestCase):
         self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
 
 
+class TestClaudeEffort(unittest.TestCase):
+    def _run(self, **kw):
+        import vulnscanai.ai.claude as C
+        captured = {}
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            captured.update(payload)
+            return {"content": [{"type": "text", "text": '{"summary": "x"}'}]}
+
+        orig = C.http.post_json
+        C.http.post_json = fake_post
+        try:
+            p = C.ClaudeProvider(**kw)
+            p.api_key = "test"          # bypass the key check
+            out = p.complete("sys", "user")
+        finally:
+            C.http.post_json = orig
+        return captured, out
+
+    def test_effort_adds_output_config_and_thinking(self):
+        cap, out = self._run(model="claude-opus-4-8", effort="max")
+        self.assertEqual(cap["output_config"], {"effort": "max"})
+        self.assertEqual(cap["thinking"], {"type": "adaptive"})
+        self.assertEqual(cap["max_tokens"], 8000)
+        self.assertIn("summary", out)
+
+    def test_no_effort_is_plain_request(self):
+        cap, _ = self._run(model="claude-sonnet-4-6")
+        self.assertNotIn("output_config", cap)
+        self.assertNotIn("thinking", cap)
+        self.assertEqual(cap["max_tokens"], 2048)
+
+    def test_get_provider_threads_effort(self):
+        from vulnscanai.ai import get_provider
+        self.assertEqual(get_provider("claude", "claude-opus-4-8",
+                                      effort="high").effort, "high")
+        # other providers accept the kwarg and simply ignore it
+        self.assertEqual(get_provider("openai", effort="high").effort, "high")
+
+
 class TestSeveritySummary(unittest.TestCase):
     def test_summary_counts_and_order(self):
         from vulnscanai.cli import _severity_summary

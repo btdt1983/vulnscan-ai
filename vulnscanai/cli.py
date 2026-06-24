@@ -317,7 +317,7 @@ def cmd_fix(cfg: Config, args) -> int:
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
 
     provider = get_provider(args.provider or cfg.provider, args.model or cfg.model,
-                            timeout=cfg.timeout)
+                            timeout=cfg.timeout, effort=cfg.claude_effort)
     if not provider.available():
         _eprint(f"Provider '{provider.name}' is not configured "
                 f"(missing {provider.api_key_env or 'endpoint'}).")
@@ -462,7 +462,8 @@ def cmd_scheduled(cfg: Config, args) -> int:
 
     if args.plan and findings:
         provider = get_provider(args.provider or cfg.provider,
-                                args.model or cfg.model, timeout=cfg.timeout)
+                                args.model or cfg.model, timeout=cfg.timeout,
+                                effort=cfg.claude_effort)
         if provider.available():
             print(f"  generating remediation plan via {provider.name}/{provider.model}")
             remediation.propose_all(provider, findings)
@@ -604,6 +605,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--provider",
                    help="AI provider (claude|openai|gemini|kimi|deepseek|mistral|local)")
     p.add_argument("--model", help="model id override")
+    p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"],
+                   help="Claude reasoning effort (turns on adaptive thinking; "
+                        "other providers ignore it)")
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser("info", help="show host/FIPS/scanner/provider status")
@@ -716,6 +720,8 @@ def _apply_overrides(cfg: Config, args) -> None:
         cfg.provider = args.provider
     if args.model:
         cfg.model = args.model
+    if getattr(args, "effort", None):
+        cfg.claude_effort = args.effort
 
 
 def main(argv: Optional[List[str]] = None) -> int:

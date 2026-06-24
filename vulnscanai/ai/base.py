@@ -26,10 +26,13 @@ class AIProvider:
     api_key_env: str = ""
 
     def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None,
-                 timeout: int = 60) -> None:
+                 timeout: int = 60, effort: Optional[str] = None) -> None:
         self.model = model or self.default_model
         self.api_key = api_key or (os.environ.get(self.api_key_env) if self.api_key_env else None)
         self.timeout = timeout
+        # Reasoning-effort hint (low|medium|high|xhigh|max). Only providers that
+        # support it act on it; the rest ignore it.
+        self.effort = effort
 
     def available(self) -> bool:
         """Whether this provider is usable (key present, etc.)."""

@@ -79,6 +79,13 @@ endpoint with `DEEPSEEK_BASE_URL` / `MISTRAL_BASE_URL` and the model with
 hosted API — run it offline through the `local` provider:
 `vulnscan-ai --provider local --model starcoder2 fix` (after `ollama pull starcoder2`).
 
+**Model and reasoning effort.** Pick the model with `--model` (or the `model`
+config), e.g. `--model claude-opus-4-8` for the most capable Claude. For Claude
+you can also dial the **reasoning effort** with `--effort low|medium|high|xhigh|max`
+(config `claude_effort`, env `VULNSCANAI_CLAUDE_EFFORT`) — it turns on adaptive
+thinking, so the model reasons harder on tricky fixes. Use `max` when correctness
+matters more than cost; other providers ignore the flag.
+
 ### Fully offline / air-gapped (Ollama)
 
 No API key, no external calls — the AI step runs against a local model.

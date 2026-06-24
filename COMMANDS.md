@@ -38,10 +38,13 @@ These go **before** the command.
 | `--state-dir STATE_DIR` | Override the state/cache directory |
 | `--provider PROVIDER` | AI provider: `claude` \| `openai` \| `gemini` \| `kimi` \| `deepseek` \| `mistral` \| `local` |
 | `--model MODEL` | Model id override (e.g. `claude-opus-4-8`, `llama3.2:1b`) |
+| `--effort LEVEL` | Claude reasoning effort: `low` \| `medium` \| `high` \| `xhigh` \| `max`. Turns on adaptive thinking; other providers ignore it. |
 
 ```bash
 vulnscan-ai --provider local --model llama3.2:1b fix
 vulnscan-ai --config /etc/vulnscan-ai/config.json scan
+# Claude, most capable model, maximum reasoning effort for the hardest fixes
+vulnscan-ai --provider claude --model claude-opus-4-8 --effort max fix --dry-run
 ```
 
 ### Severity values

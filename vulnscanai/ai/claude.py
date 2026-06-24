@@ -30,6 +30,14 @@ class ClaudeProvider(AIProvider):
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
+        # Reasoning effort (low|medium|high|xhigh|max) turns on adaptive thinking;
+        # give the answer more room so thinking tokens don't crowd out the JSON.
+        # output_config.effort is GA (no beta header); thinking blocks are skipped
+        # below because we only read type=="text" parts.
+        if self.effort:
+            payload["max_tokens"] = 8000
+            payload["thinking"] = {"type": "adaptive"}
+            payload["output_config"] = {"effort": self.effort}
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": self.api_version,
