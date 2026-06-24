@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.19
+Version:        0.1.20
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,12 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.20-1
+- Setup wizard can configure a cloud AI provider + API key: pick claude/
+  openai/gemini/kimi/deepseek/mistral, enter the key (hidden), optional model
+  and (Claude) effort. Stored in the 0600 user config (new 'api_keys') and
+  injected into the environment on load; a real env var always wins.
+
 * Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.19-1
 - Claude reasoning-effort selection: global --effort low|medium|high|xhigh|max
   (config claude_effort, env VULNSCANAI_CLAUDE_EFFORT) turns on adaptive
