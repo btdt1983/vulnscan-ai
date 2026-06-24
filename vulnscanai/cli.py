@@ -11,7 +11,7 @@ import os
 import re
 import socket
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import __version__, export_fix, remediation
 from .ai import PROVIDERS, ProviderError, get_provider
@@ -48,6 +48,36 @@ _SEV_TAG = {
     "critical": "CRIT", "important": "IMPT", "high": "HIGH",
     "moderate": "MOD", "medium": "MED", "low": "LOW", "unknown": "UNK",
 }
+_SEV_ANSI = {
+    "critical": "\033[1;31m", "important": "\033[31m", "high": "\033[31m",
+    "moderate": "\033[33m", "medium": "\033[33m", "low": "\033[32m",
+    "unknown": "\033[2m",
+}
+_RESET = "\033[0m"
+# Order severities for the summary line (highest first).
+_SEV_ORDER = ["critical", "important", "high", "moderate", "medium", "low", "unknown"]
+
+
+def _use_color() -> bool:
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def _severity_summary(findings: List[Finding], color: bool = False) -> str:
+    """A 'CRIT 3   IMPT 11   LOW 2' tally, in severity order, optionally coloured."""
+    counts: Dict[str, int] = {}
+    for f in findings:
+        counts[(f.severity or "unknown").lower()] = \
+            counts.get((f.severity or "unknown").lower(), 0) + 1
+    parts = []
+    for sev in _SEV_ORDER:
+        n = counts.get(sev)
+        if not n:
+            continue
+        seg = f"{_SEV_TAG.get(sev, 'UNK')} {n}"
+        if color:
+            seg = _SEV_ANSI.get(sev, "") + seg + _RESET
+        parts.append(seg)
+    return "   ".join(parts)
 
 
 def _print_findings(findings: List[Finding]) -> None:
@@ -56,19 +86,24 @@ def _print_findings(findings: List[Finding]) -> None:
         return
     findings = sorted(findings, key=lambda f: (-severity_rank(f.severity),
                                                -(f.cvss_score or 0)))
+    color = _use_color()
     print(f"{'SEV':<5} {'CVSS':<5} {'PACKAGE / ISSUE':<45} {'ADVISORY':<14} CVEs")
     print("-" * 90)
     for f in findings:
-        tag = _SEV_TAG.get(f.severity.lower(), "UNK")
+        sev = (f.severity or "unknown").lower()
+        cell = f"{_SEV_TAG.get(sev, 'UNK'):<5}"        # pad first, colour after
+        if color:
+            cell = _SEV_ANSI.get(sev, "") + cell + _RESET
         cvss = f"{f.cvss_score:.1f}" if f.cvss_score is not None else "-"
         # Package findings show the package; config findings (ssh, systemd, ...)
         # have no package, so fall back to the title.
         subject = (f.package or f.title or "-")[:44]
         adv = (f.advisory or "-")[:13]
         cves = ", ".join(f.cve_ids[:3]) + ("…" if len(f.cve_ids) > 3 else "")
-        print(f"{tag:<5} {cvss:<5} {subject:<45} {adv:<14} {cves}")
+        print(f"{cell} {cvss:<5} {subject:<45} {adv:<14} {cves}")
     print("-" * 90)
-    print(f"{len(findings)} finding(s).")
+    summary = _severity_summary(findings, color)
+    print(f"{len(findings)} finding(s)" + (f":   {summary}" if summary else "."))
 
 
 def _filter_severity(findings: List[Finding], minimum: str) -> List[Finding]:

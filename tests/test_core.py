@@ -1032,6 +1032,29 @@ class TestDashboard(unittest.TestCase):
         self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
 
 
+class TestSeveritySummary(unittest.TestCase):
+    def test_summary_counts_and_order(self):
+        from vulnscanai.cli import _severity_summary
+        fs = [_finding(severity="critical"),
+              _finding(severity="critical", cve_ids=["CVE-2026-9"]),
+              _finding(severity="low", package="x")]
+        s = _severity_summary(fs)
+        self.assertIn("CRIT 2", s)
+        self.assertIn("LOW 1", s)
+        self.assertLess(s.index("CRIT"), s.index("LOW"))   # highest first
+        self.assertNotIn("\033", s)                        # no colour by default
+
+    def test_summary_colour(self):
+        from vulnscanai.cli import _severity_summary
+        sc = _severity_summary([_finding(severity="important")], color=True)
+        self.assertIn("\033[", sc)
+        self.assertTrue(sc.endswith("\033[0m"))
+
+    def test_summary_empty(self):
+        from vulnscanai.cli import _severity_summary
+        self.assertEqual(_severity_summary([]), "")
+
+
 class TestWebrootScanner(unittest.TestCase):
     def test_classify(self):
         from vulnscanai.scanners.webroot import classify
