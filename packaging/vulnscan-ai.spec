@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.18
+Version:        0.1.19
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,11 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.19-1
+- Claude reasoning-effort selection: global --effort low|medium|high|xhigh|max
+  (config claude_effort, env VULNSCANAI_CLAUDE_EFFORT) turns on adaptive
+  thinking for the Claude provider; other providers ignore it.
+
 * Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.18-1
 - scan: a per-severity tally line below the table and a colour-coded SEV
   column (TTY-aware; NO_COLOR honoured, never coloured when piped).
