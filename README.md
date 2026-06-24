@@ -59,7 +59,29 @@ Runs directly from a checkout too: `python -m vulnscanai ...`
 
 ## Configure the AI provider
 
-Set the key for whichever provider you use (Claude is the default):
+The AI step proposes fixes (you approve them). Claude is the default. There are
+two ways to set it up.
+
+### Easiest: the setup wizard
+
+Run **`vulnscan-ai setup`** (it also runs on the first interactive use) and pick:
+
+- **A cloud provider** — `claude` / `openai` / `gemini` / `kimi` / `deepseek` /
+  `mistral`. Paste the API key (hidden input), optionally choose a model and, for
+  Claude, the reasoning effort. The key is stored in the per-user config (mode
+  0600) and used automatically — no environment variable to manage.
+- **A local, offline model** — download an Ollama model sized to the host; no
+  key, nothing leaves the machine.
+
+> An API key is **not** a Claude Pro / ChatGPT Plus subscription — create a
+> developer key (with billing) at the provider's console (`console.anthropic.com`,
+> `platform.openai.com`, …). **Nothing to install for the cloud providers:**
+> vulnscan-ai calls the plain REST API (no SDK, no "Claude Code") — you only need
+> the key and network access to the provider.
+
+### Manual: environment variables
+
+Or set the key yourself — a real env var always wins over a wizard-stored one:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...      # claude (default)
@@ -72,14 +94,6 @@ export OLLAMA_HOST=http://127.0.0.1:11434  # local (no key)
 export OLLAMA_MODEL=llama3.2:1b          # local model to use
 export NVD_API_KEY=...                   # optional, higher NVD rate limit
 ```
-
-> An API key is **not** a Claude Pro / ChatGPT Plus subscription — create a
-> developer key (with billing) at the provider's console (e.g.
-> `console.anthropic.com`, `platform.openai.com`). Instead of exporting a
-> variable, you can run **`vulnscan-ai setup`** and pick a cloud provider: it
-> prompts for the key (hidden input) and saves it to the per-user config
-> (mode 0600), so no env var is needed. A real env var always wins over the
-> stored key.
 
 DeepSeek and Mistral both speak the OpenAI Chat Completions API; override the
 endpoint with `DEEPSEEK_BASE_URL` / `MISTRAL_BASE_URL` and the model with
