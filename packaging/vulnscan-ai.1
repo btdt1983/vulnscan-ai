@@ -34,10 +34,16 @@ Path to a configuration JSON file.
 Override the state/cache directory (findings and reports).
 .TP
 .BI \-\-provider " PROVIDER"
-AI provider: \fBclaude\fR, \fBopenai\fR, \fBgemini\fR, \fBkimi\fR, or \fBlocal\fR.
+AI provider: \fBclaude\fR, \fBopenai\fR, \fBgemini\fR, \fBkimi\fR, \fBdeepseek\fR, \fBmistral\fR, or \fBlocal\fR.
 .TP
 .BI \-\-model " MODEL"
 Model id override, e.g. \fIclaude-opus-4-8\fR or \fIllama3.2:1b\fR.
+.TP
+.BI \-\-effort " LEVEL"
+Claude reasoning effort: \fBlow\fR, \fBmedium\fR, \fBhigh\fR, \fBxhigh\fR, or \fBmax\fR. Turns on adaptive thinking; other providers ignore it.
+.TP
+.BI \-\-no\-banner
+Suppress the startup banner.
 .SH SEVERITY VALUES
 Where a severity is accepted, use one of, in increasing order:
 .BR low ", " moderate ", " important ", " critical
