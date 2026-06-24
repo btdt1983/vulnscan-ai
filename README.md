@@ -11,8 +11,8 @@ AlmaLinux, Rocky, CentOS Stream, Fedora) that:
 
 1. **Scans** the host for known vulnerabilities using native and public sources,
 2. **enriches** findings from online vulnerability databases,
-3. uses an **LLM** (Claude by default; OpenAI / Gemini / Kimi / local optional)
-   to **propose remediation**,
+3. uses an **LLM** (Claude by default; OpenAI / Gemini / Kimi / DeepSeek /
+   Mistral / local optional) to **propose remediation**,
 4. **applies fixes only after explicit approval** (or in `--dry-run`), screening
    every command against a safety deny-list,
 5. exports a **PDF report** (or HTML when `reportlab` isn't installed).
@@ -27,7 +27,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Decision | Choice |
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
-| Scanners | `dnf`/`yum` + RHSA, OpenSCAP/OVAL, NVD/Red Hat CVE feeds |
+| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot` |
 | Fix mode | **Suggest + approve** by default (safest for prod/FIPS) |
 | AI backend | **Claude** default; pluggable adapters for the rest |
 
@@ -198,6 +198,12 @@ vulnscan-ai scan --scanner systemd
 
 # Audit network exposure (risky listening ports via ss)
 vulnscan-ai scan --scanner ports
+
+# Audit web document roots for exposed files (.sql dumps, .env, .git/, backups)
+vulnscan-ai scan --scanner webroot
+
+# Run every available scanner at once
+vulnscan-ai scan --all
 ```
 
 The `systemd` scanner is conservative by default (only `UNSAFE`, enabled
