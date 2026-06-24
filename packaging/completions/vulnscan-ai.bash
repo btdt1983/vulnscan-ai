@@ -3,22 +3,22 @@ _vulnscan_ai() {
     local cur prev cmds global i cmd opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="info scan fix report providers setup update-oval scheduled"
-    global="--help --version --config --state-dir --provider --model"
+    cmds="info scan fix rollback report providers setup update-oval scheduled dashboard"
+    global="--help --version --no-banner --config --state-dir --provider --model"
 
     # value completions that depend on the previous word
     case "$prev" in
         --provider)
-            COMPREPLY=($(compgen -W "claude openai gemini kimi local" -- "$cur")); return;;
+            COMPREPLY=($(compgen -W "claude openai gemini kimi deepseek mistral local" -- "$cur")); return;;
         --min-severity|--fail-on)
             COMPREPLY=($(compgen -W "low moderate important critical" -- "$cur")); return;;
         --scanner)
-            COMPREPLY=($(compgen -W "dnf oscap" -- "$cur")); return;;
-        --config|--pdf|--json|--sarif|-o|--output)
+            COMPREPLY=($(compgen -W "dnf oscap ssh systemd ports webroot" -- "$cur")); return;;
+        --config|--pdf|--json|--sarif|--export-script|--export-ansible|-o|--output)
             COMPREPLY=($(compgen -f -- "$cur")); return;;
         --state-dir)
             COMPREPLY=($(compgen -d -- "$cur")); return;;
-        --model|--keep)
+        --model|--keep|--user|--port|--bind|--allow|--deny)
             return;;
     esac
 
@@ -26,7 +26,7 @@ _vulnscan_ai() {
     cmd=""
     for ((i=1; i<COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            info|scan|fix|report|providers|setup|update-oval|scheduled)
+            info|scan|fix|rollback|report|providers|setup|update-oval|scheduled|dashboard)
                 cmd="${COMP_WORDS[i]}"; break;;
         esac
     done
@@ -36,10 +36,12 @@ _vulnscan_ai() {
     fi
 
     case "$cmd" in
-        scan)      opts="--scanner --min-severity --no-enrich --pdf --json --sarif";;
-        fix)       opts="--scan --scanner --no-enrich --min-severity --yes --dry-run --pdf";;
+        scan)      opts="--scanner --all --min-severity --no-enrich --pdf --json --sarif --ignore";;
+        fix)       opts="--scan --scanner --all --no-enrich --min-severity --yes --dry-run --pdf --export-script --export-ansible --ignore";;
+        rollback)  opts="--list";;
         report)    opts="-o --output --min-severity";;
-        scheduled) opts="--scanner --no-enrich --min-severity --plan --html --keep --fail-on";;
+        scheduled) opts="--scanner --all --no-enrich --min-severity --plan --html --keep --fail-on";;
+        dashboard) opts="--set-password --user --allow --deny --list --port --bind";;
         *)         opts="";;
     esac
     COMPREPLY=($(compgen -W "$opts --help" -- "$cur"))

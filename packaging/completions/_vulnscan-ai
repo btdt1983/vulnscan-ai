@@ -3,26 +3,30 @@
 
 _vulnscan-ai() {
   local curcontext="$curcontext" state line
-  local -a cmds sev scanners
+  local -a cmds sev scanners providers
   cmds=(
     'info:show host/FIPS/GPU/scanner/provider status'
     'scan:scan for vulnerabilities'
     'fix:propose and (with approval) apply fixes'
+    'rollback:restore a previously-applied fix from its backup'
     'report:render a report/export from saved findings'
     'providers:list AI providers'
     'setup:first-run wizard to pick an offline AI model'
     'update-oval:download the OpenSCAP OVAL feed'
     'scheduled:non-interactive scan + dated report'
+    'dashboard:serve saved findings over an HTTPS login dashboard'
   )
   sev=(low moderate important critical)
-  scanners=(dnf oscap)
+  scanners=(dnf oscap ssh systemd ports webroot)
+  providers=(claude openai gemini kimi deepseek mistral local)
 
   _arguments -C \
     '(-h --help)'{-h,--help}'[show help]' \
     '--version[show version and exit]' \
+    '--no-banner[suppress the startup banner]' \
     '--config[config JSON path]:file:_files' \
     '--state-dir[state/cache directory]:dir:_files -/' \
-    '--provider[AI provider]:provider:(claude openai gemini kimi local)' \
+    "--provider[AI provider]:provider:($providers)" \
     '--model[model id override]:model:' \
     '1: :->cmd' \
     '*:: :->args' && return
@@ -34,34 +38,54 @@ _vulnscan-ai() {
       case $line[1] in
         scan)
           _arguments \
-            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            "*--scanner[scanner to run]:scanner:($scanners)" \
+            '--all[run every available scanner]' \
             "--min-severity[severity floor]:severity:($sev)" \
             '--no-enrich[skip CVE-feed enrichment]' \
             '--pdf[write PDF report]:file:_files' \
             '--json[write JSON export]:file:_files' \
-            '--sarif[write SARIF 2.1.0]:file:_files' ;;
+            '--sarif[write SARIF 2.1.0]:file:_files' \
+            '*--ignore[suppress matching findings]:pattern:' ;;
         fix)
           _arguments \
             '--scan[scan first]' \
-            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            "*--scanner[scanner to run]:scanner:($scanners)" \
+            '--all[with --scan: run every available scanner]' \
             '--no-enrich[skip CVE-feed enrichment]' \
             "--min-severity[severity floor]:severity:($sev)" \
             '--yes[auto-approve every fix]' \
             '--dry-run[plan only; execute nothing]' \
-            '--pdf[write PDF report]:file:_files' ;;
+            '--pdf[write PDF report]:file:_files' \
+            '--export-script[write a bash fix script]:file:_files' \
+            '--export-ansible[write an Ansible playbook]:file:_files' \
+            '*--ignore[suppress matching findings]:pattern:' ;;
+        rollback)
+          _arguments \
+            '--list[list fixes with a stored backup]' \
+            '1:finding id:' ;;
         report)
           _arguments \
             '(-o --output)'{-o,--output}'[output path (.pdf/.html/.json/.sarif)]:file:_files' \
             "--min-severity[severity floor]:severity:($sev)" ;;
         scheduled)
           _arguments \
-            '*--scanner[scanner to run]:scanner:(dnf oscap)' \
+            "*--scanner[scanner to run]:scanner:($scanners)" \
+            '--all[run every available scanner]' \
             '--no-enrich[skip CVE-feed enrichment]' \
             "--min-severity[severity floor]:severity:($sev)" \
             '--plan[embed AI proposals (no execution)]' \
             '--html[HTML report instead of PDF]' \
             '--keep[retain N reports]:n:' \
             "--fail-on[exit 3 at/above severity]:severity:($sev)" ;;
+        dashboard)
+          _arguments \
+            '--set-password[set the admin password, then exit]' \
+            '--user[admin username]:user:' \
+            '*--allow[permit a network client]:ip/cidr:' \
+            '*--deny[remove a permitted client]:ip/cidr:' \
+            '--list[show dashboard settings, then exit]' \
+            '--port[listen port]:port:' \
+            '--bind[bind address]:address:' ;;
         *) _message 'no more arguments' ;;
       esac ;;
   esac
