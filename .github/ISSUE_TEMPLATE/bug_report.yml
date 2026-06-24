@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for filing a bug. For anything security-sensitive, **do not use
-        this form** — email security@techhack.nl instead (see the Security
+        this form** — email btdt1983@protonmail.com instead (see the Security
         Policy).
   - type: textarea
     id: what-happened

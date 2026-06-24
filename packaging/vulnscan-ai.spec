@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.17
+Version:        0.1.18
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,12 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.18-1
+- scan: a per-severity tally line below the table and a colour-coded SEV
+  column (TTY-aware; NO_COLOR honoured, never coloured when piped).
+- Refresh bash/zsh completions for the current commands, scanners, providers
+  and options (dashboard, webroot, --all, --no-banner, …).
+
 * Tue Jun 23 2026 vulnscan-ai <noreply@example.invalid> - 0.1.17-1
 - New 'webroot' scanner: finds web-exposed sensitive files in document roots
   (*.sql/*.sqlite dumps, .env/wp-config.php secrets, .git/, *.bak/*~ backups,

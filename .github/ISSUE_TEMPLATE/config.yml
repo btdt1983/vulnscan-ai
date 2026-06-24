@@ -2,7 +2,7 @@ blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability (private)
     url: https://github.com/btdt1983/vulnscan-ai/blob/master/.github/SECURITY.md
-    about: Do not file security issues publicly — email security@techhack.nl.
+    about: Do not file security issues publicly — email btdt1983@protonmail.com.
   - name: Command reference
     url: https://github.com/btdt1983/vulnscan-ai/blob/master/COMMANDS.md
     about: Full reference for every command and option before reporting usage.

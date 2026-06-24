@@ -39,5 +39,5 @@ Start every new source file with the license header:
 
 ## Reporting issues
 
-For security-sensitive reports, email security@techhack.nl rather than opening a
+For security-sensitive reports, email btdt1983@protonmail.com rather than opening a
 public issue.

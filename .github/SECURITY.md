@@ -5,7 +5,7 @@
 Please report security issues **privately** — do not open a public issue or pull
 request for anything exploitable.
 
-Email **security@techhack.nl** with:
+Email **btdt1983@protonmail.com** with:
 
 - a description of the issue and its impact,
 - steps to reproduce (or a proof of concept),

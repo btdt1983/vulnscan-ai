@@ -411,4 +411,4 @@ The copyright holder retains the right to offer the software under separate
 **commercial terms**. Contributions are accepted under the
 [Contributor License Agreement](CLA.md) (see [CONTRIBUTING.md](CONTRIBUTING.md)),
 which preserves that option. For a commercial license, contact
-security@techhack.nl.
+btdt1983@protonmail.com.
