@@ -10,6 +10,7 @@ later run uses the local, offline backend with no API key.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -91,11 +92,9 @@ def _recommended_index(budget_gb: float) -> int:
 
 def _setup_model(config, *, force: bool = False) -> int:
     """Interactive model picker. Returns a process exit code (0 = fine)."""
-    print("=" * 64)
-    print(" vulnscan-ai setup — offline AI model")
-    print("=" * 64)
-    print("Pick a local model for AI remediation. It runs fully offline via")
-    print("Ollama: no API key, nothing leaves this host.\n")
+    print("\n--- Local offline model (Ollama) ---")
+    print("Pick a local model for AI remediation. It runs fully offline:")
+    print("no API key, nothing leaves this host.\n")
 
     if not _have("ollama"):
         print("Ollama is not installed.")
@@ -228,9 +227,92 @@ def _configure_notifications(config) -> None:
     print("  Test it with:  vulnscan-ai scheduled")
 
 
+# Cloud providers that authenticate with an API key, with where to get one.
+_CLOUD_PROVIDERS = [
+    ("claude", "ANTHROPIC_API_KEY", "console.anthropic.com"),
+    ("openai", "OPENAI_API_KEY", "platform.openai.com"),
+    ("gemini", "GEMINI_API_KEY", "aistudio.google.com"),
+    ("kimi", "MOONSHOT_API_KEY", "platform.moonshot.cn"),
+    ("deepseek", "DEEPSEEK_API_KEY", "platform.deepseek.com"),
+    ("mistral", "MISTRAL_API_KEY", "console.mistral.ai"),
+]
+
+
+def _configure_cloud_provider(config) -> int:
+    """Pick a cloud AI provider and store its API key in the user config."""
+    print("\n" + "-" * 64)
+    print(" Cloud AI provider — API key")
+    print("-" * 64)
+    print("Note: an API key is NOT a Claude Pro / ChatGPT Plus subscription.")
+    print("Create a developer key (with billing) at the provider's console.\n")
+    for i, (name, env, url) in enumerate(_CLOUD_PROVIDERS, 1):
+        print(f"  {i}  {name:9} key={env:18} {url}")
+    print("  0  skip (configure later with 'vulnscan-ai setup' or env vars)")
+
+    choice = _ask(f"\nChoose a provider [0-{len(_CLOUD_PROVIDERS)}]: ")
+    try:
+        idx = int(choice) - 1
+    except ValueError:
+        idx = -1
+    if not 0 <= idx < len(_CLOUD_PROVIDERS):
+        print("Skipped.")
+        return 0
+    name, env, url = _CLOUD_PROVIDERS[idx]
+
+    import getpass
+    try:
+        key = getpass.getpass(f"  Paste your {name} API key (hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+    if not key:
+        print("  No key entered; skipping.")
+        return 0
+
+    model = _ask("  Model id (blank = provider default): ").strip()
+    effort = ""
+    if name == "claude":
+        effort = _ask("  Reasoning effort low|medium|high|xhigh|max "
+                      "(blank = default): ").strip()
+
+    keys = dict(getattr(config, "api_keys", {}) or {})
+    keys[env] = key
+    updates = {"provider": name, "api_keys": keys}
+    if model:
+        updates["model"] = model
+    if name == "claude" and effort:
+        updates["claude_effort"] = effort
+    path = config.write_user_config(updates)
+
+    # Reflect into this process so a follow-up command in the same run works.
+    os.environ.setdefault(env, key)
+    config.provider = name
+    if model:
+        config.model = model
+    print(f"  Saved provider '{name}' and API key to {path} (mode 0600).")
+    print(f"  Test it:  vulnscan-ai providers   (should show {name} ready)")
+    return 0
+
+
 def run_setup(config, *, force: bool = False) -> int:
-    """Run the model picker, then offer email-notification setup."""
-    code = _setup_model(config, force=force)
+    """Pick an AI backend (local model or cloud key), then offer email setup."""
+    print("=" * 64)
+    print(" vulnscan-ai setup")
+    print("=" * 64)
+    print("How should the AI remediation step get its model?\n")
+    print("  1  Local, offline model via Ollama (no API key, nothing leaves the host)")
+    print("  2  Cloud provider with an API key (Claude, OpenAI, Gemini, ...)")
+    print("  0  Skip for now")
+    choice = _ask("\nChoose [0/1/2] (default 1): ") or "1"
+
+    if choice == "2":
+        code = _configure_cloud_provider(config)
+    elif choice == "0":
+        print("Skipped AI backend setup.")
+        code = 0
+    else:
+        code = _setup_model(config, force=force)
+
     _configure_notifications(config)
     config.mark_setup_done()
     return code

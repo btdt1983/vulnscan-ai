@@ -73,6 +73,14 @@ export OLLAMA_MODEL=llama3.2:1b          # local model to use
 export NVD_API_KEY=...                   # optional, higher NVD rate limit
 ```
 
+> An API key is **not** a Claude Pro / ChatGPT Plus subscription — create a
+> developer key (with billing) at the provider's console (e.g.
+> `console.anthropic.com`, `platform.openai.com`). Instead of exporting a
+> variable, you can run **`vulnscan-ai setup`** and pick a cloud provider: it
+> prompts for the key (hidden input) and saves it to the per-user config
+> (mode 0600), so no env var is needed. A real env var always wins over the
+> stored key.
+
 DeepSeek and Mistral both speak the OpenAI Chat Completions API; override the
 endpoint with `DEEPSEEK_BASE_URL` / `MISTRAL_BASE_URL` and the model with
 `--model` (e.g. `deepseek-chat`, `mistral-large-latest`). **StarCoder 2** has no

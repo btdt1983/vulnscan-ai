@@ -18,7 +18,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 | [`rollback`](#rollback) | Restore a previously-applied transactional fix from its backup |
 | [`report`](#report) | Render a report/export from the last saved scan |
 | [`providers`](#providers) | List AI providers and their readiness |
-| [`setup`](#setup) | First-run wizard: pick & download an offline AI model |
+| [`setup`](#setup) | First-run wizard: choose an offline model or a cloud provider + API key |
 | [`update-oval`](#update-oval) | Download the OpenSCAP OVAL feed for this distro |
 | [`scheduled`](#scheduled) | Non-interactive scan + dated report (systemd timer/cron) |
 | [`dashboard`](#dashboard) | Serve saved findings over an HTTPS login dashboard |
@@ -297,14 +297,26 @@ Provider keys (set in the environment):
 
 ## `setup`
 
-Interactive first-run wizard: detects GPU/RAM, lists offline models sized to your
-host, can install Ollama, downloads your pick, and saves it as the default
-provider/model. Also offered automatically on the first interactive run.
+Interactive first-run wizard. Choose how the AI remediation step gets its model:
+
+- **Local, offline (Ollama)** — detects GPU/RAM, lists offline models sized to
+  your host, can install Ollama, downloads your pick, and saves it as the
+  default provider/model. No API key; nothing leaves the host.
+- **Cloud provider + API key** — pick `claude` / `openai` / `gemini` / `kimi` /
+  `deepseek` / `mistral`; it prompts for the key (hidden input) and stores it in
+  the per-user config (mode 0600), plus optional model and (for Claude) effort.
+
+It then offers to set up email notifications. Also runs automatically on the
+first interactive use.
 
 ```bash
 vulnscan-ai setup
 ```
 No options. Suppress the auto-prompt with `VULNSCANAI_NO_SETUP=1`.
+
+> An API key is **not** a Claude Pro / ChatGPT Plus subscription — create a
+> developer key (with billing) at the provider's console. A real `*_API_KEY`
+> env var always takes precedence over a key stored by the wizard.
 
 ---
 

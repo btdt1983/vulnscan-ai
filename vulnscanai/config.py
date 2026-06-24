@@ -46,6 +46,10 @@ class Config:
     timeout: int = 30
     reports_dir: Optional[str] = None        # default: <state_dir>/reports
     ignore: List[str] = field(default_factory=list)  # baseline suppression
+    # Provider API keys captured by the setup wizard, keyed by env-var name
+    # (e.g. {"ANTHROPIC_API_KEY": "sk-ant-..."}). Injected into the environment
+    # on load so the providers pick them up; a real env var always wins.
+    api_keys: Dict[str, str] = field(default_factory=dict)
     # Email notifications for scheduled scans (configured via the wizard).
     notify_email: Optional[str] = None       # recipient; enables email when set
     notify_min_severity: str = "important"   # email only if findings >= this
@@ -84,6 +88,11 @@ class Config:
                 cfg.ignore.extend(ln.strip() for ln in fh
                                   if ln.strip() and not ln.startswith("#"))
         cfg._apply_env()
+        # Make wizard-stored API keys visible to the providers (which read
+        # os.environ). A key already set in the real environment always wins.
+        for env_name, value in (cfg.api_keys or {}).items():
+            if value and env_name not in os.environ:
+                os.environ[env_name] = value
         return cfg
 
     @staticmethod

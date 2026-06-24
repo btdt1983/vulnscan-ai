@@ -2,6 +2,7 @@
   "provider": "claude",
   "model": null,
   "claude_effort": null,
+  "api_keys": {},
   "scanners": ["dnf"],
   "min_severity": "low",
   "enrich": true,

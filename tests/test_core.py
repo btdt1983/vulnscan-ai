@@ -1032,6 +1032,59 @@ class TestDashboard(unittest.TestCase):
         self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
 
 
+class TestApiKeyConfig(unittest.TestCase):
+    def _write(self, **data):
+        d = tempfile.mkdtemp()
+        data.setdefault("state_dir", d)
+        p = os.path.join(d, "config.json")
+        with open(p, "w") as fh:
+            json.dump(data, fh)
+        return p
+
+    def test_stored_key_injected_and_provider_ready(self):
+        p = self._write(api_keys={"ANTHROPIC_API_KEY": "sk-stored"})
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            Config.load(p)
+            self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), "sk-stored")
+            from vulnscanai.ai import get_provider
+            self.assertTrue(get_provider("claude").available())
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    def test_real_env_wins_over_stored(self):
+        p = self._write(api_keys={"ANTHROPIC_API_KEY": "sk-stored"})
+        os.environ["ANTHROPIC_API_KEY"] = "sk-real-env"
+        try:
+            Config.load(p)
+            self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), "sk-real-env")
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+
+    def test_wizard_saves_provider_and_key(self):
+        import getpass
+        import vulnscanai.wizard as W
+        home = tempfile.mkdtemp()
+        answers = iter(["1", "", ""])    # provider 1 (claude), model blank, effort blank
+        orig_ask, orig_gp = W._ask, getpass.getpass
+        orig_home = os.environ.get("HOME")
+        W._ask = lambda prompt="": next(answers, "")
+        getpass.getpass = lambda prompt="": "sk-ant-test"
+        os.environ["HOME"] = home
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            W._configure_cloud_provider(Config())
+            saved = json.load(open(os.path.join(
+                home, ".config", "vulnscan-ai", "config.json")))
+        finally:
+            W._ask, getpass.getpass = orig_ask, orig_gp
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertEqual(saved["provider"], "claude")
+        self.assertEqual(saved["api_keys"]["ANTHROPIC_API_KEY"], "sk-ant-test")
+
+
 class TestClaudeEffort(unittest.TestCase):
     def _run(self, **kw):
         import vulnscanai.ai.claude as C
