@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.22
+Version:        0.1.23
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,11 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.23-1
+- Dashboard: show a loading-spinner overlay while a Preview/Apply fix runs, so
+  the page doesn't look frozen during the (synchronous) AI call on slow local
+  models.
+
 * Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.22-1
 - Fix: the 'local' (Ollama) provider crashed with TypeError on the 'effort'
   argument introduced in 0.1.19, breaking 'fix' and the dashboard Preview/Apply
