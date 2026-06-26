@@ -28,6 +28,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import threading
 import time
 from hashlib import pbkdf2_hmac
 from hmac import compare_digest
@@ -238,6 +239,18 @@ button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.5rem .9
 .allow{font-size:.85rem;color:#5b6675;margin-top:1.5rem;border-top:1px solid #e6e9ee;
   padding-top:1rem}
 .allow code{margin-right:.3rem}
+.actions{margin-top:.6rem;display:flex;gap:.5rem;flex-wrap:wrap}
+.btn-sm{font-size:.82rem;padding:.35rem .7rem;border-radius:6px;border:1px solid #cdd3dc;
+  background:#fff;color:#10151c;cursor:pointer}
+.btn-sm:hover{background:#f0f3f7}
+.btn-apply{background:#b3261e;color:#fff;border-color:#b3261e}
+.btn-apply:hover{background:#911e18}
+.scanbtn{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.45rem .9rem;
+  font-size:.88rem;cursor:pointer}.scanbtn:hover{background:#0a4bbf}
+.scanbtn[disabled]{opacity:.6;cursor:default}
+.flash{background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;padding:.6rem .9rem;
+  margin:1rem 0;font-size:.92rem}
+.ok{color:#1a7f37}.bad{color:#b3261e}
 """
 
 
@@ -272,7 +285,7 @@ def render_login(error: str = "") -> str:
 </div></body></html>"""
 
 
-def _finding_html(f: Finding) -> str:
+def _finding_html(f: Finding, allow_fix: bool = False) -> str:
     sev = (f.severity or "unknown").lower()
     color = _SEV_COLOR.get(sev, "#5b6675")
     parts = [f'<div class="f" style="border-left-color:{color}">']
@@ -312,12 +325,70 @@ def _finding_html(f: Finding) -> str:
         for c in rem.commands[:8]:
             body.append(f"<div><code>{html.escape(c)}</code></div>")
         parts.append('<div class="rem">' + "".join(body) + "</div>")
+    # Per-finding actions: Preview (AI plan, dry-run) always; Apply only when
+    # the operator opted in via dashboard_allow_fix.
+    apply_btn = (f'<button class="btn-sm btn-apply" name="mode" value="apply">'
+                 f'Apply fix</button>' if allow_fix else "")
+    parts.append(
+        f'<form method="post" action="/fix" class="actions">'
+        f'<input type="hidden" name="id" value="{html.escape(f.id)}">'
+        f'<button class="btn-sm" name="mode" value="preview">Preview fix</button>'
+        f'{apply_btn}</form>')
     parts.append("</div>")
     return "".join(parts)
 
 
+def render_fix_result(title: str, fid: str, rem, allow_fix: bool,
+                      *, applied: bool = False, error: str = "") -> str:
+    """Render the outcome of a Preview/Apply action."""
+    parts = [f'<h2 style="margin:1rem 0 .3rem">{html.escape(title)}</h2>']
+    if error:
+        parts.append(f'<div class="flash bad">{html.escape(error)}</div>')
+    if rem is not None:
+        meta = (f'(risk {html.escape(rem.risk)}, '
+                f'confidence {rem.confidence:.0%})')
+        parts.append(f'<p><b>Proposed fix:</b> {html.escape(rem.summary or "—")} '
+                     f'<span class="meta">{meta}</span></p>')
+        if rem.commands:
+            parts.append('<div class="rem">' + "".join(
+                f'<div><code>{html.escape(c)}</code></div>'
+                for c in rem.commands) + '</div>')
+        results = getattr(rem, "apply_results", None) or []
+        if results:
+            rows = "".join(
+                f'<div>{html.escape(str(r.get("status", "?")))}: '
+                f'<code>{html.escape(str(r.get("command", r.get("step", ""))))}</code></div>'
+                for r in results)
+            label = ('<span class="ok">applied</span>' if applied and not rem.rolled_back
+                     else ('<span class="bad">rolled back</span>' if rem.rolled_back
+                           else 'dry-run (not executed)'))
+            parts.append(f'<p><b>Result:</b> {label}</p><div class="rem">{rows}</div>')
+        elif not applied:
+            parts.append('<p class="meta">Preview only — nothing was executed.</p>')
+    if rem is not None and not applied and not error:
+        if allow_fix:
+            parts.append(
+                f'<form method="post" action="/fix" style="margin-top:1rem">'
+                f'<input type="hidden" name="id" value="{html.escape(fid)}">'
+                f'<button class="btn-sm btn-apply" name="mode" value="apply">'
+                f'Apply this fix now</button></form>')
+        else:
+            parts.append('<p class="meta">Applying from the dashboard is disabled. '
+                         'Set <code>dashboard_allow_fix: true</code> in the config to '
+                         'enable it, or apply via <code>vulnscan-ai fix</code>.</p>')
+    parts.append('<p style="margin-top:1.2rem"><a href="/">&larr; back to dashboard</a></p>')
+    return (f"<!doctype html><html><head><meta charset=utf-8>"
+            f'<meta name=viewport content="width=device-width,initial-scale=1">'
+            f"<title>vulnscan-ai dashboard — fix</title><style>{_STYLE}</style></head>"
+            f'<body><header><div class="wrap">{logo_svg(22)} '
+            f'<b>vulnscan&middot;ai</b> dashboard<span class=spacer></span>'
+            f'<a href="/">Dashboard</a></div></header>'
+            f'<div class="wrap">{"".join(parts)}</div></body></html>')
+
+
 def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
-                     allow_entries: List[str]) -> str:
+                     allow_entries: List[str], *, allow_fix: bool = False,
+                     scan_running: bool = False, scan_message: str = "") -> str:
     counts: dict = {}
     for f in findings:
         counts[(f.severity or "unknown").lower()] = counts.get(
@@ -330,21 +401,31 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
                 f'<div class="tile"><div class="n" style="color:{_SEV_COLOR[sev]}">'
                 f'{counts[sev]}</div><div class="l">{sev}</div></div>')
     order = sorted(findings, key=lambda f: severity_rank(f.severity), reverse=True)
-    body = "".join(_finding_html(f) for f in order) or "<p>No findings saved yet. " \
-        "Run <code>vulnscan-ai scan</code> first.</p>"
+    body = "".join(_finding_html(f, allow_fix) for f in order) or \
+        "<p>No findings saved yet. Run a scan to populate the dashboard.</p>"
     allow_rows = "".join(
         f'<code>{html.escape(e)}</code>'
         f'<form class="inline" method=post action="/deny">'
         f'<input type=hidden name=ip value="{html.escape(e)}">'
         f'<button title="remove">&times;</button></form> ' for e in allow_entries)
-    return f"""<!doctype html><html><head><meta charset=utf-8>
+    # Auto-refresh while a scan runs so results appear without a manual reload.
+    refresh = '<meta http-equiv="refresh" content="5">' if scan_running else ""
+    scan_btn = ('<button class="scanbtn" disabled>Scanning…</button>'
+                if scan_running else
+                '<button class="scanbtn">Scan now</button>')
+    flash = (f'<div class="flash">{html.escape(scan_message)}</div>'
+             if scan_message and not scan_running else "")
+    return f"""<!doctype html><html><head><meta charset=utf-8>{refresh}
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>vulnscan-ai dashboard — {html.escape(host)}</title><style>{_STYLE}</style></head>
 <body>
 <header><div class="wrap">{logo_svg(22)} <b>vulnscan&middot;ai</b> dashboard
   <span class=meta style="color:#9fb0c8">{html.escape(host)} &middot; {html.escape(scanned_at)} &middot; v{__version__}</span>
-  <span class=spacer></span><a href="/logout">Sign out</a></div></header>
+  <span class=spacer></span>
+  <form class="inline" method=post action="/scan">{scan_btn}</form>
+  &nbsp;<a href="/logout">Sign out</a></div></header>
 <div class="wrap">
+  {flash}
   <div class="tiles">{''.join(tiles)}</div>
   {body}
   <div class="allow">
@@ -455,6 +536,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._do_allow(add=True)
         if path == "/deny":
             return self._do_allow(add=False)
+        if path == "/scan":
+            return self._do_scan()
+        if path == "/fix":
+            return self._do_fix()
         return self._text(HTTPStatusNotFound, "Not found")
 
     # -- handlers ------------------------------------------------------------
@@ -483,8 +568,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         findings, mtime = self._load_findings()
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)) if mtime else "no scan yet"
         host = socket.gethostname()
-        self._html(200, render_dashboard(findings, host, when,
-                                         self.server.allow))  # type: ignore[attr-defined]
+        srv = self.server  # type: ignore[attr-defined]
+        self._html(200, render_dashboard(
+            findings, host, when, srv.allow,
+            allow_fix=bool(getattr(srv.cfg, "dashboard_allow_fix", False)),
+            scan_running=srv.scan_running, scan_message=srv.scan_message))
 
     def _serve_findings_json(self):
         findings, _ = self._load_findings()
@@ -507,6 +595,91 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         cfg.write_user_config({"dashboard_allow": allow})
         return self._redirect("/")
 
+    # -- scan / fix actions --------------------------------------------------
+    def _do_scan(self):
+        srv = self.server  # type: ignore[attr-defined]
+        with srv.scan_lock:
+            if srv.scan_running:
+                return self._redirect("/")     # already running; ignore
+            srv.scan_running = True
+            srv.scan_message = ""
+        threading.Thread(target=_run_scan, args=(srv,), daemon=True).start()
+        return self._redirect("/")
+
+    def _do_fix(self):
+        cfg = self._cfg()
+        p = self._body_params()
+        fid = p.get("id", "")
+        mode = p.get("mode", "preview")
+        allow_fix = bool(getattr(cfg, "dashboard_allow_fix", False))
+        findings, _ = self._load_findings()
+        target = next((f for f in findings if f.id == fid), None)
+        if target is None:
+            return self._html(HTTPStatusNotFound,
+                              render_fix_result("Finding not found", "", None,
+                                                allow_fix, error="No such finding."))
+
+        from .ai import ProviderError, get_provider
+        from . import remediation
+        try:
+            provider = get_provider(cfg.provider, cfg.model, timeout=cfg.timeout,
+                                    effort=getattr(cfg, "claude_effort", None))
+        except ProviderError as exc:
+            return self._html(200, render_fix_result(
+                target.title, fid, None, allow_fix, error=str(exc)))
+        if not provider.available():
+            return self._html(200, render_fix_result(
+                target.title, fid, None, allow_fix,
+                error=(f"AI provider '{cfg.provider}' is not configured "
+                       f"(no API key). Set one with 'vulnscan-ai setup' or an "
+                       f"environment variable.")))
+        try:
+            rem = remediation.propose(provider, target)
+        except Exception as exc:  # noqa: BLE001
+            return self._html(200, render_fix_result(
+                target.title, fid, None, allow_fix,
+                error=f"Could not propose a fix: {exc}"))
+        target.remediation = rem
+
+        applied = False
+        if mode == "apply" and allow_fix:
+            try:
+                remediation.apply(target, dry_run=False, state_dir=cfg.state_dir)
+                applied = True
+            except Exception as exc:  # noqa: BLE001
+                return self._html(200, render_fix_result(
+                    target.title, fid, rem, allow_fix,
+                    error=f"Apply failed: {exc}"))
+            # Persist the remediation + results back into findings.json.
+            for i, f in enumerate(findings):
+                if f.id == target.id:
+                    findings[i] = target
+            from .cli import _save_findings
+            _save_findings(cfg, findings)
+        else:
+            # Preview: screen the commands (dry-run) without executing anything.
+            try:
+                remediation.apply(target, dry_run=True, state_dir=cfg.state_dir)
+            except Exception:  # noqa: BLE001
+                pass
+        return self._html(200, render_fix_result(
+            target.title, fid, rem, allow_fix, applied=applied))
+
+
+def _run_scan(srv) -> None:
+    """Background full scan: runs the configured scanners and saves findings."""
+    cfg = srv.cfg
+    try:
+        from .cli import _filter_severity, _save_findings, do_scan
+        findings = do_scan(cfg, cfg.scanners, enrich=cfg.enrich)
+        findings = _filter_severity(findings, cfg.min_severity)
+        _save_findings(cfg, findings)
+        srv.scan_message = f"Scan complete: {len(findings)} finding(s)."
+    except Exception as exc:  # noqa: BLE001
+        srv.scan_message = f"Scan failed: {exc}"
+    finally:
+        srv.scan_running = False
+
 
 class DashboardServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
@@ -516,6 +689,9 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         self.cfg = cfg
         self.sessions = sessions
         self.allow = allow
+        self.scan_running = False
+        self.scan_message = ""
+        self.scan_lock = threading.Lock()
 
 
 def serve(cfg, *, port: Optional[int] = None,
@@ -551,6 +727,12 @@ def serve(cfg, *, port: Optional[int] = None,
     print(f"vulnscan-ai dashboard: https://{host}:{port}/  ({where})")
     print(f"Sign in as user '{cfg.dashboard_user}'  "
           f"(change the password with: vulnscan-ai dashboard --set-password)")
+    if getattr(cfg, "dashboard_allow_fix", False):
+        print("Apply-from-dashboard is ENABLED (dashboard_allow_fix=true): the "
+              "Fix button can change this host.")
+    else:
+        print("Apply-from-dashboard is off (read-only + preview). Set "
+              "dashboard_allow_fix=true in the config to enable the Apply button.")
     hint = firewall_hint(port, bind, allow)
     if hint:
         print("Hint: " + hint)

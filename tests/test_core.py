@@ -1031,6 +1031,34 @@ class TestDashboard(unittest.TestCase):
         self.assertNotIn(65101, dashboard.BROWSER_BLOCKED_PORTS)
         self.assertIn(6666, dashboard.BROWSER_BLOCKED_PORTS)   # IRC, ERR_UNSAFE_PORT
 
+    def test_scan_and_fix_buttons(self):
+        f = _finding(severity="important", title="openssl", package="openssl")
+        off = dashboard.render_dashboard([f], "h", "now", [], allow_fix=False)
+        self.assertIn("Scan now", off)
+        self.assertIn("Preview fix", off)
+        self.assertNotIn("Apply fix", off)          # apply hidden by default
+        on = dashboard.render_dashboard([f], "h", "now", [], allow_fix=True)
+        self.assertIn("Apply fix", on)              # shown only with opt-in
+
+    def test_scanning_state_autorefreshes(self):
+        page = dashboard.render_dashboard([], "h", "now", [], scan_running=True)
+        self.assertIn("Scanning", page)
+        self.assertIn('http-equiv="refresh"', page)
+
+    def test_apply_fix_is_opt_in_by_default(self):
+        self.assertFalse(Config().dashboard_allow_fix)
+
+    def test_fix_result_preview_vs_apply_gate(self):
+        rem = Remediation(summary="do x", risk="low", confidence=0.9,
+                          commands=["dnf update -y openssl"])
+        # allow_fix off -> apply is disabled, no apply form
+        off = dashboard.render_fix_result("openssl", "abc", rem, False)
+        self.assertIn("Applying from the dashboard is disabled", off)
+        self.assertNotIn('value="apply"', off)
+        # allow_fix on -> an explicit apply form is offered
+        on = dashboard.render_fix_result("openssl", "abc", rem, True)
+        self.assertIn('value="apply"', on)
+
 
 class TestApiKeyConfig(unittest.TestCase):
     def _write(self, **data):

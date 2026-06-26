@@ -390,6 +390,17 @@ It refuses to start until a password is set, so findings are never exposed
 unauthenticated. Port (`--port`, default 65101) and bind address (`--bind`) are
 overridable.
 
+### Scan and fix from the dashboard
+
+- **Scan now** (header button) runs the configured scanners in the background
+  and refreshes the page when done.
+- **Preview fix** (per finding) asks the AI for a remediation and shows the
+  plan — a dry-run, nothing is executed. Needs an AI provider configured.
+- **Apply fix** actually runs the fix on the host (transactional, with
+  auto-rollback). It is **off by default** — the dashboard stays read-only
+  unless you opt in with `"dashboard_allow_fix": true` in the config. Only then
+  does the Apply button appear. (Login + the allow-list still gate access.)
+
 Opening it to the network is two layers: the app allow-list **and** the host
 firewall. firewalld blocks the port by default — allow it only for your clients:
 

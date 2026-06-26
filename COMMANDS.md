@@ -401,6 +401,12 @@ allow-list opens it to specific network clients; loopback is always allowed.
 Also serves `GET /api/findings.json` (authenticated). Run it as a service with
 `systemctl enable --now vulnscan-ai-dashboard`.
 
+**Actions in the UI.** A **Scan now** button runs the configured scanners in the
+background; per-finding **Preview fix** shows the AI's proposed plan (dry-run, no
+execution). **Apply fix** runs the fix transactionally on the host and is **off
+by default** — set `"dashboard_allow_fix": true` in the config to make the Apply
+button appear (login + allow-list still apply). `--list` shows this state.
+
 ```bash
 sudo vulnscan-ai dashboard --set-password
 ssh -L 65101:localhost:65101 host    # then browse https://localhost:65101/

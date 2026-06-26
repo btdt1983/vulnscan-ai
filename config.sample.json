@@ -25,5 +25,6 @@
   "dashboard_user": "admin",
   "dashboard_port": 65101,
   "dashboard_bind": "127.0.0.1",
-  "dashboard_allow": []
+  "dashboard_allow": [],
+  "dashboard_allow_fix": false
 }

@@ -567,6 +567,7 @@ def cmd_dashboard(cfg: Config, args) -> int:
         print(f"port:     {cfg.dashboard_port}")
         print(f"bind:     {cfg.dashboard_bind}  (auto 0.0.0.0 when an allow-list is set)")
         print(f"allow:    {cfg.dashboard_allow or '(localhost only)'}")
+        print(f"apply-fix: {'enabled' if cfg.dashboard_allow_fix else 'off (preview only)'}")
         return 0
     try:
         return D.serve(cfg, port=args.port, bind=args.bind)

@@ -67,6 +67,7 @@ class Config:
     dashboard_allow: List[str] = field(default_factory=list)  # client IPs/CIDRs
     dashboard_cert: Optional[str] = None            # default: <state_dir>/dashboard-cert.pem
     dashboard_key: Optional[str] = None             # default: <state_dir>/dashboard-key.pem
+    dashboard_allow_fix: bool = False               # allow applying fixes from the dashboard UI
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
