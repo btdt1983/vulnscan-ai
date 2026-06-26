@@ -506,8 +506,31 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _server_error(self):
+        """Last-resort handler so an unexpected error returns a page, not an
+        empty response (ERR_EMPTY_RESPONSE). Logs the traceback to stderr."""
+        import traceback
+        traceback.print_exc()
+        try:
+            self._text(500, "Internal error — see the service log "
+                            "(journalctl -u vulnscan-ai-dashboard).")
+        except Exception:  # noqa: BLE001
+            pass
+
     # -- routes --------------------------------------------------------------
     def do_GET(self):
+        try:
+            self._dispatch_get()
+        except Exception:  # noqa: BLE001
+            self._server_error()
+
+    def do_POST(self):
+        try:
+            self._dispatch_post()
+        except Exception:  # noqa: BLE001
+            self._server_error()
+
+    def _dispatch_get(self):
         if self._denied_by_allowlist():
             return
         path = self.path.split("?", 1)[0]
@@ -524,7 +547,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._serve_dashboard()
         return self._text(HTTPStatusNotFound, "Not found")
 
-    def do_POST(self):
+    def _dispatch_post(self):
         if self._denied_by_allowlist():
             return
         path = self.path.split("?", 1)[0]

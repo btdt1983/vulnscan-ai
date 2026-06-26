@@ -24,9 +24,10 @@ class LocalProvider(AIProvider):
     default_model = "llama3.1"
     api_key_env = ""  # no key needed
 
-    def __init__(self, model=None, api_key=None, timeout: int = 60) -> None:
+    def __init__(self, model=None, api_key=None, timeout: int = 60,
+                 effort=None) -> None:
         super().__init__(model=model or os.environ.get("OLLAMA_MODEL"),
-                         api_key=api_key, timeout=timeout)
+                         api_key=api_key, timeout=timeout, effort=effort)
         if not self.model:
             self.model = self.default_model
         # Local CPU inference (and the first-call model load) is far slower

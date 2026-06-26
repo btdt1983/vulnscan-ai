@@ -1152,6 +1152,14 @@ class TestClaudeEffort(unittest.TestCase):
         # other providers accept the kwarg and simply ignore it
         self.assertEqual(get_provider("openai", effort="high").effort, "high")
 
+    def test_every_provider_accepts_effort(self):
+        # Regression: a provider that overrides __init__ (e.g. local) must still
+        # accept the effort kwarg get_provider passes, or it 500s / crashes.
+        from vulnscanai.ai import PROVIDERS, get_provider
+        for name in PROVIDERS:
+            self.assertEqual(get_provider(name, effort="high").effort, "high",
+                             f"provider {name} dropped effort")
+
 
 class TestSeveritySummary(unittest.TestCase):
     def test_summary_counts_and_order(self):

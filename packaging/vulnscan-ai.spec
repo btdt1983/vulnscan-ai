@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.21
+Version:        0.1.22
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,13 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.22-1
+- Fix: the 'local' (Ollama) provider crashed with TypeError on the 'effort'
+  argument introduced in 0.1.19, breaking 'fix' and the dashboard Preview/Apply
+  with a local model. All providers now accept the effort kwarg.
+- Dashboard: an unexpected handler error now returns a 500 page (with the
+  traceback logged) instead of an empty response (ERR_EMPTY_RESPONSE).
+
 * Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.21-1
 - Dashboard gains interactive actions: a 'Scan now' button runs the scanners
   in the background, per-finding 'Preview fix' shows the AI plan (dry-run), and
