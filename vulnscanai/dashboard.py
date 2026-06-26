@@ -251,7 +251,29 @@ button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.5rem .9
 .flash{background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;padding:.6rem .9rem;
   margin:1rem 0;font-size:.92rem}
 .ok{color:#1a7f37}.bad{color:#b3261e}
+#busy{display:none;position:fixed;inset:0;background:rgba(13,20,36,.78);z-index:50;
+  color:#fff;align-items:center;justify-content:center;flex-direction:column;gap:1rem;
+  font-size:1.05rem;text-align:center;padding:1rem}
+#busy .spin{width:2.6rem;height:2.6rem;border:3px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 """
+
+# Shown while a Preview/Apply request is in flight so the page doesn't look
+# frozen — the synchronous AI call can take a while on a local model.
+_BUSY_OVERLAY = """<div id="busy"><div class="spin"></div>
+<div id="busymsg">Working…</div></div>
+<script>
+document.querySelectorAll('form[action="/fix"]').forEach(function(fm){
+  fm.addEventListener('submit',function(e){
+    var m=(e.submitter&&e.submitter.value==='apply')
+      ? 'Applying the fix on the host…'
+      : 'Asking the AI for a fix proposal… (a local model can take a while)';
+    document.getElementById('busymsg').textContent=m;
+    document.getElementById('busy').style.display='flex';
+  });
+});
+</script>"""
 
 
 def logo_svg(px: int = 40) -> str:
@@ -383,7 +405,7 @@ def render_fix_result(title: str, fid: str, rem, allow_fix: bool,
             f'<body><header><div class="wrap">{logo_svg(22)} '
             f'<b>vulnscan&middot;ai</b> dashboard<span class=spacer></span>'
             f'<a href="/">Dashboard</a></div></header>'
-            f'<div class="wrap">{"".join(parts)}</div></body></html>')
+            f'<div class="wrap">{"".join(parts)}</div>{_BUSY_OVERLAY}</body></html>')
 
 
 def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
@@ -435,7 +457,7 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
       <button>Add host</button>
     </form>
   </div>
-</div></body></html>"""
+</div>{_BUSY_OVERLAY}</body></html>"""
 
 
 # --------------------------------------------------------------------------- #
