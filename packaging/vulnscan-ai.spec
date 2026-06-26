@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.20
+Version:        0.1.21
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,13 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.21-1
+- Dashboard gains interactive actions: a 'Scan now' button runs the scanners
+  in the background, per-finding 'Preview fix' shows the AI plan (dry-run), and
+  'Apply fix' runs the fix transactionally on the host. Apply is opt-in only
+  (config dashboard_allow_fix, default false) so the dashboard stays read-only
+  by default; login and the allow-list still gate access.
+
 * Wed Jun 24 2026 vulnscan-ai <noreply@example.invalid> - 0.1.20-1
 - Setup wizard can configure a cloud AI provider + API key: pick claude/
   openai/gemini/kimi/deepseek/mistral, enter the key (hidden), optional model
