@@ -1366,15 +1366,18 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertEqual(rem.commands, ["dnf update -y bash"])
 
     def test_config_finding_keeps_valid_scaffolding(self):
+        # validate_cmd is "true" (a binary present everywhere, incl. the minimal
+        # CI/build container) standing in for a real validator like `sshd -t`;
+        # the point is that a config-source finding keeps its scaffolding.
         rem = self._propose(
             '{"summary":"harden","commands":["sed -i s/a/b/ /etc/ssh/sshd_config"],'
-            '"backup_paths":["/etc/ssh/sshd_config"],"validate_cmd":"sshd -t",'
+            '"backup_paths":["/etc/ssh/sshd_config"],"validate_cmd":"true",'
             '"service":"sshd","restart_mode":"reload"}',
             source="ssh", title="sshd")
         self.assertEqual(rem.backup_paths, ["/etc/ssh/sshd_config"])
         self.assertEqual(rem.restart_mode, "reload")
         self.assertEqual(rem.service, "sshd")
-        self.assertEqual(rem.validate_cmd, "sshd -t")
+        self.assertEqual(rem.validate_cmd, "true")
 
 
 class TestContainerScanner(unittest.TestCase):
