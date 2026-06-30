@@ -1346,6 +1346,25 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertEqual(rem.commands,
                          ["dnf update -y --advisory=ALSA-2026:28973"])
 
+    def test_null_list_fields_do_not_crash(self):
+        # qwen2.5:0.5b returned "config_changes": null; dict.get(k, []) returns
+        # None (not []) when the key is present-but-null, which crashed propose().
+        rem = self._propose(
+            '{"summary":"x","commands":null,"config_changes":null,'
+            '"backup_paths":null,"rollback_commands":null,"risk":null}',
+            source="dnf", title="coreutils")
+        self.assertEqual(rem.commands, [])
+        self.assertEqual(rem.config_changes, [])
+        self.assertEqual(rem.backup_paths, [])
+        self.assertEqual(rem.rollback_commands, [])
+        self.assertEqual(rem.risk, "unknown")
+
+    def test_scalar_command_tolerated(self):
+        # A model that returns a single command as a string, not a list.
+        rem = self._propose('{"summary":"x","commands":"dnf update -y bash"}',
+                            source="dnf", title="bash")
+        self.assertEqual(rem.commands, ["dnf update -y bash"])
+
     def test_config_finding_keeps_valid_scaffolding(self):
         rem = self._propose(
             '{"summary":"harden","commands":["sed -i s/a/b/ /etc/ssh/sshd_config"],'

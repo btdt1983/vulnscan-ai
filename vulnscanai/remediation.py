@@ -153,6 +153,18 @@ def _finding_brief(f: Finding) -> str:
     return "\n".join(lines)
 
 
+def _as_list(val: object) -> List[object]:
+    """Coerce a model field to a list. `dict.get(k, [])` returns None when the
+    key is present but null (`"config_changes": null`), so guard every list
+    field through here: list stays as-is, None/empty -> [], a scalar -> [scalar].
+    """
+    if isinstance(val, list):
+        return val
+    if val is None or val == "":
+        return []
+    return [val]
+
+
 def _scrub(val: object) -> Optional[str]:
     """Drop a model echo of a schema placeholder.
 
@@ -215,14 +227,14 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
     text = provider.complete(SYSTEM_PROMPT, _finding_brief(finding))
     data = extract_json(text)
 
-    commands = [str(c) for c in data.get("commands", []) if str(c).strip()]
+    commands = [str(c) for c in _as_list(data.get("commands")) if str(c).strip()]
     commands = _rewrite_advisory(commands, finding.advisory)
 
     restart_mode = str(data.get("restart_mode", "none") or "none").lower().strip()
     if restart_mode not in _VALID_RESTART:
         restart_mode = "none"
 
-    backup_paths = [str(p) for p in data.get("backup_paths", []) if str(p).strip()]
+    backup_paths = [str(p) for p in _as_list(data.get("backup_paths")) if str(p).strip()]
     service = _scrub(data.get("service"))
     validate_cmd = _real_command(data.get("validate_cmd"))
 
@@ -236,11 +248,11 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
         summary=_scrub(data.get("summary")) or "",
         explanation=_scrub(data.get("explanation")) or "",
         commands=commands,
-        config_changes=[s for s in (_scrub(c) for c in data.get("config_changes", []))
+        config_changes=[s for s in (_scrub(c) for c in _as_list(data.get("config_changes")))
                         if s],
         verification=_real_command(data.get("verification")),
         requires_reboot=bool(data.get("requires_reboot", False)),
-        risk=str(data.get("risk", "unknown")).lower(),
+        risk=str(data.get("risk") or "unknown").lower(),
         confidence=float(data.get("confidence", 0.0) or 0.0),
         provider=provider.name,
         model=provider.model,
@@ -248,7 +260,7 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
         service=service,
         validate_cmd=validate_cmd,
         restart_mode=restart_mode,
-        rollback_commands=[str(c) for c in data.get("rollback_commands", [])
+        rollback_commands=[str(c) for c in _as_list(data.get("rollback_commands"))
                            if str(c).strip()],
     )
     return rem

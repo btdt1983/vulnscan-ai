@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.25
+Version:        0.1.26
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,13 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.26-1
+- BUGFIX (regression in 0.1.25): 'fix' crashed with "TypeError: 'NoneType'
+  object is not iterable" when the AI returned a null list field (e.g.
+  "config_changes": null). dict.get(k, []) returns None — not [] — when the key
+  is present but null; every list field (commands/config_changes/backup_paths/
+  rollback_commands) is now coerced safely, and a single scalar is tolerated.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.25-1
 - fix: stream every apply step live (backup, each command, validate, service
   reload/health check, rollback) together with the command's own output, so you
