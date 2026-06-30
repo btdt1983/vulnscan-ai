@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Dict, Type
 
 from .base import Scanner
+from .container import ContainerScanner
 from .dnf_rhsa import DnfRhsaScanner
 from .nvd import NvdEnricher
 from .openscap import OpenScapScanner
@@ -25,10 +26,12 @@ SCANNERS: Dict[str, Type[Scanner]] = {
     SystemdSecurityScanner.name: SystemdSecurityScanner,
     PortScanner.name: PortScanner,
     WebrootScanner.name: WebrootScanner,
+    ContainerScanner.name: ContainerScanner,
 }
 
 __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
-    "SystemdSecurityScanner", "PortScanner", "WebrootScanner", "NvdEnricher",
+    "SystemdSecurityScanner", "PortScanner", "WebrootScanner",
+    "ContainerScanner", "NvdEnricher",
     "ServiceStateEnricher", "SCANNERS", "download_oval", "detect_distro",
 ]

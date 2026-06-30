@@ -27,7 +27,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Decision | Choice |
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
-| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot` |
+| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container` |
 | Fix mode | **Suggest + approve** by default (safest for prod/FIPS) |
 | AI backend | **Claude** default; pluggable adapters for the rest |
 
@@ -202,6 +202,9 @@ vulnscan-ai scan --scanner ports
 # Audit web document roots for exposed files (.sql dumps, .env, .git/, backups)
 vulnscan-ai scan --scanner webroot
 
+# Audit running Podman/Docker containers for unsafe runtime settings
+vulnscan-ai scan --scanner container
+
 # Run every available scanner at once
 vulnscan-ai scan --all
 ```
@@ -244,6 +247,12 @@ The scanners are built to avoid noise:
   a unit that is enabled, `static` or has a listening socket counts as exposed,
   and an undetermined state keeps full severity. Disable with
   `"service_state_filter": false` in the config.
+- **`container`** only inspects **running** containers and flags settings that are
+  unambiguously dangerous (`--privileged`, the runtime control socket or sensitive
+  host paths bind-mounted, host network/PID/IPC namespaces, dangerous added
+  capabilities, disabled seccomp/SELinux). Benign bind mounts are ignored,
+  read-only mounts are downgraded a step, and `--privileged` is reported once
+  rather than as a flood of per-capability findings.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

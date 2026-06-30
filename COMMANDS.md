@@ -80,7 +80,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
@@ -108,6 +108,17 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > `docRoot`) and well-known defaults. Filesystem-only and conservative (server
 > config may still deny a path — noted per finding); the AI proposes moving/
 > deleting the file, a deny rule, or tighter permissions.
+
+> **`container` scanner.** Inspects **running** Podman and Docker containers
+> (`<runtime> ps` + `inspect`, read-only, no images pulled) and flags unsafe
+> runtime settings, CIS-Docker style: `--privileged`, the runtime control socket
+> or sensitive host paths (`/`, `/etc`, `/var/lib/containers`, …) bind-mounted,
+> host network/PID/IPC namespaces, dangerous added capabilities (`SYS_ADMIN`,
+> `SYS_MODULE`, `--cap-add ALL`, …), disabled seccomp/AppArmor/SELinux, and root
+> as the container user. Conservative: benign mounts are ignored, read-only
+> mounts downgraded a step, `--privileged` reported once. These are runtime
+> findings, so the AI's fix is to **recreate the container** without the flag (no
+> service to reload) — review before acting.
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |

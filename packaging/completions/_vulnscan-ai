@@ -17,7 +17,7 @@ _vulnscan-ai() {
     'dashboard:serve saved findings over an HTTPS login dashboard'
   )
   sev=(low moderate important critical)
-  scanners=(dnf oscap ssh systemd ports webroot)
+  scanners=(dnf oscap ssh systemd ports webroot container)
   providers=(claude openai gemini kimi deepseek mistral local)
 
   _arguments -C \

@@ -1236,5 +1236,100 @@ class TestWebrootScanner(unittest.TestCase):
         self.assertIn("webroot", SCANNERS)
 
 
+class TestContainerScanner(unittest.TestCase):
+    def test_classify_mount(self):
+        from vulnscanai.scanners.container import classify_mount
+        # runtime control socket == host takeover
+        self.assertEqual(
+            classify_mount("/var/run/docker.sock", True)[1], "critical")
+        self.assertEqual(
+            classify_mount("/run/podman/podman.sock", False)[1], "critical")
+        # whole root fs
+        self.assertEqual(classify_mount("/", True)[1], "critical")
+        # /etc writable critical, read-only downgraded to important
+        self.assertEqual(classify_mount("/etc", True)[1], "critical")
+        self.assertEqual(classify_mount("/etc/pki", False)[1], "important")
+        # most-specific prefix wins (/var/lib/containers over /)
+        self.assertEqual(
+            classify_mount("/var/lib/containers/storage", True)[1], "critical")
+        # benign app data is ignored
+        self.assertIsNone(classify_mount("/srv/app/data", True))
+        self.assertIsNone(classify_mount("/var/lib/myapp", True))
+
+    def test_privileged_and_socket(self):
+        from vulnscanai.scanners.container import assess_container
+        info = {
+            "Name": "/web", "Id": "abc123def456",
+            "Config": {"Image": "nginx:latest", "User": "nginx"},
+            "HostConfig": {"Privileged": True},
+            "Mounts": [{"Type": "bind", "Source": "/var/run/docker.sock",
+                        "Destination": "/var/run/docker.sock", "RW": True}],
+        }
+        findings = assess_container(info, "podman")
+        issues = {f.raw["issue"] for f in findings}
+        self.assertIn("privileged", issues)
+        self.assertIn("mount", issues)
+        sevs = {f.raw["issue"]: f.severity for f in findings}
+        self.assertEqual(sevs["privileged"], "critical")
+        for f in findings:
+            self.assertEqual(f.source, "container")
+            self.assertEqual(f.raw["container"], "web")
+            self.assertIn("recommended", f.raw)
+        # distinct ids
+        self.assertEqual(len({f.id for f in findings}), len(findings))
+
+    def test_namespaces_caps_secopt(self):
+        from vulnscanai.scanners.container import assess_container
+        info = {
+            "Name": "app", "Id": "f00",
+            "Config": {"Image": "img", "User": ""},   # root
+            "HostConfig": {
+                "NetworkMode": "host", "PidMode": "host", "IpcMode": "host",
+                "CapAdd": ["CAP_SYS_ADMIN", "NET_RAW"],
+                "SecurityOpt": ["seccomp=unconfined", "label=disable"],
+            },
+        }
+        issues = {f.raw["issue"] for f in assess_container(info)}
+        self.assertEqual(
+            {"network_host", "pid_host", "ipc_host", "capability",
+             "seccomp_unconfined", "selinux_disabled", "runs_as_root"} <= issues,
+            True)
+
+    def test_cap_all_collapses(self):
+        from vulnscanai.scanners.container import assess_container
+        info = {"Name": "x", "Id": "1", "Config": {"User": "app"},
+                "HostConfig": {"CapAdd": ["ALL", "SYS_ADMIN"]}}
+        issues = [f.raw["issue"] for f in assess_container(info)]
+        self.assertIn("cap_all", issues)
+        self.assertNotIn("capability", issues)   # individual caps not re-listed
+
+    def test_readonly_mount_downgraded(self):
+        from vulnscanai.scanners.container import assess_container
+        info = {"Name": "x", "Id": "1", "Config": {"User": "app"},
+                "HostConfig": {"Binds": ["/etc:/host-etc:ro"]}}
+        f = [x for x in assess_container(info) if x.raw["issue"] == "mount"][0]
+        self.assertEqual(f.severity, "important")   # ro downgrade from critical
+        self.assertFalse(f.raw["rw"])
+
+    def test_clean_container_no_findings(self):
+        from vulnscanai.scanners.container import assess_container
+        info = {
+            "Name": "safe", "Id": "1",
+            "Config": {"Image": "img", "User": "1000:1000"},
+            "HostConfig": {
+                "Privileged": False, "NetworkMode": "bridge",
+                "CapAdd": [], "SecurityOpt": [],
+                "Binds": ["/srv/app/data:/data:rw"],
+            },
+            "Mounts": [{"Type": "bind", "Source": "/srv/app/data",
+                        "Destination": "/data", "RW": True}],
+        }
+        self.assertEqual(assess_container(info), [])
+
+    def test_registered(self):
+        from vulnscanai.scanners import SCANNERS
+        self.assertIn("container", SCANNERS)
+
+
 if __name__ == "__main__":
     unittest.main()

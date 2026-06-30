@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.23
+Version:        0.1.24
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.24-1
+- New 'container' scanner (7th): inspects running Podman/Docker containers and
+  flags unsafe runtime settings CIS-Docker style — --privileged, runtime control
+  socket or sensitive host paths bind-mounted, host network/PID/IPC namespaces,
+  dangerous added capabilities (SYS_ADMIN, SYS_MODULE, --cap-add ALL), disabled
+  seccomp/AppArmor/SELinux, and root as the container user. Read-only and
+  conservative (benign mounts ignored, read-only mounts downgraded, --privileged
+  reported once). Selectable via --scanner container / --all.
+
 * Fri Jun 26 2026 vulnscan-ai <noreply@example.invalid> - 0.1.23-1
 - Dashboard: show a loading-spinner overlay while a Preview/Apply fix runs, so
   the page doesn't look frozen during the (synchronous) AI call on slow local
