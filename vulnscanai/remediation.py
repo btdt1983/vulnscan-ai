@@ -55,22 +55,53 @@ reload), otherwise restrict the port with the firewall (`firewall-cmd`), \
 otherwise stop+disable the service if it is unused. Never block the SSH port you \
 are connected through.
 
-Respond with ONLY a JSON object, no prose, with this schema:
+Respond with ONLY a JSON object, no prose. Replace every <...> placeholder with
+a real value (or null where it says "or null"); never echo a placeholder back.
+Schema:
 {
-  "summary": "one line",
-  "explanation": "why this fixes it and any caveats",
-  "commands": ["shell command", ...],
-  "config_changes": ["human-readable non-command step", ...],
-  "verification": "command to confirm the fix",
-  "requires_reboot": true|false,
-  "risk": "low|medium|high",
-  "confidence": 0.0-1.0,
-  "backup_paths": ["/etc/ssh/sshd_config", ...],
-  "validate_cmd": "sshd -t",
-  "service": "sshd",
-  "restart_mode": "reload|restart|none",
-  "rollback_commands": ["optional non-file rollback, e.g. dnf history undo last"]
+  "summary": "<one-line summary>",
+  "explanation": "<why this fixes it and any caveats>",
+  "commands": ["<shell command>"],
+  "config_changes": ["<human-readable non-command step>"],
+  "verification": "<command that confirms the fix, or null>",
+  "requires_reboot": false,
+  "risk": "low",
+  "confidence": 0.0,
+  "backup_paths": ["<exact file you edit>"],
+  "validate_cmd": "<non-destructive config check e.g. sshd -t, or null>",
+  "service": "<systemd unit to reload, or null>",
+  "restart_mode": "none",
+  "rollback_commands": ["<optional non-file rollback, e.g. dnf history undo last>"]
 }"""
+
+# restart_mode must be exactly one of these; anything else (incl. a model that
+# echoes the "reload|restart|none" menu) is normalised to "none".
+_VALID_RESTART = {"reload", "restart", "none"}
+
+# Finding sources whose fix legitimately edits a config file or manages a
+# service, and may therefore carry transactional metadata (backup_paths /
+# validate_cmd / service / restart_mode). Package-CVE sources (dnf, oscap) must
+# NOT: their fix is a `dnf update`, so any backup/validate/service the model
+# attaches — e.g. backing up sshd_config and "validating" by restarting sshd to
+# update a Python library — is a hallucination and is stripped.
+_CONFIG_SOURCES = {"ssh", "systemd", "ports", "webroot"}
+
+# Recognised advisory id shapes (Red Hat / AlmaLinux / Oracle / Rocky families).
+_ADVISORY_RE = re.compile(
+    r"^(?:RH[SBE]A|AL[SBE]A|ELSA|RLSA|CESA)-?\d{4}[:\-]\d+", re.I)
+
+# "dnf/yum update" prints this when the targeted advisory/package changes
+# nothing — exit code is still 0, which would otherwise read as a real success.
+_NOTHING_DONE_RE = re.compile(r"\bnothing to do\b", re.I)
+
+# Literal placeholder strings from older/example schemas that a weak model may
+# echo verbatim. Matched case-insensitively after stripping; always discarded.
+_PLACEHOLDER_TEXTS = {
+    "one line", "why this fixes it and any caveats",
+    "command to confirm the fix", "shell command",
+    "human-readable non-command step", "reload|restart|none",
+    "optional non-file rollback, e.g. dnf history undo last",
+}
 
 # Commands we refuse to run regardless of what the model proposes.
 _DENY_PATTERNS = [
@@ -122,26 +153,101 @@ def _finding_brief(f: Finding) -> str:
     return "\n".join(lines)
 
 
+def _scrub(val: object) -> Optional[str]:
+    """Drop a model echo of a schema placeholder.
+
+    Placeholders are written as <...>; a weak/small model sometimes copies them
+    verbatim (e.g. returns the literal "command to confirm the fix"). Returns a
+    clean non-empty string, or None when the value is empty or an echoed
+    placeholder.
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    if s.startswith("<") and s.endswith(">"):
+        return None
+    if s.lower() in _PLACEHOLDER_TEXTS:
+        return None
+    return s
+
+
+def _real_command(cmd: Optional[str]) -> Optional[str]:
+    """Return cmd only if its first token resolves to a real executable.
+
+    Guards validate_cmd / verification: prose like "validate nginx version" or a
+    leftover placeholder must never be executed as if it were a command.
+    """
+    cmd = _scrub(cmd)
+    if cmd is None:
+        return None
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return None
+    if not toks:
+        return None
+    # Search the sbin dirs too: validate binaries (sshd, nginx, visudo) live in
+    # /usr/sbin, which isn't always on PATH. Over-dropping a real validate_cmd
+    # would mean restarting a service unvalidated, so resolve generously.
+    search = (os.environ.get("PATH", "") + ":/usr/sbin:/sbin:/usr/local/sbin")
+    if shutil.which(toks[0], path=search) is None:
+        return None
+    return cmd
+
+
+def _rewrite_advisory(commands: List[str], advisory: Optional[str]) -> List[str]:
+    """Force any `--advisory=` to the finding's real advisory id.
+
+    A weak model often invents a malformed id (e.g. `ALSAA2026:28973`), which
+    `dnf` then silently matches to nothing. When the finding carries a real,
+    well-formed advisory, substitute it so the update actually applies.
+    """
+    adv = (advisory or "").strip()
+    if not adv or not _ADVISORY_RE.match(adv):
+        return commands
+    return [re.sub(r"--advisory[=\s]\S+", f"--advisory={adv}", c) for c in commands]
+
+
 def propose(provider: AIProvider, finding: Finding) -> Remediation:
-    """Ask the model for a remediation plan for one finding."""
+    """Ask the model for a remediation plan for one finding, then sanitise it."""
     text = provider.complete(SYSTEM_PROMPT, _finding_brief(finding))
     data = extract_json(text)
+
+    commands = [str(c) for c in data.get("commands", []) if str(c).strip()]
+    commands = _rewrite_advisory(commands, finding.advisory)
+
+    restart_mode = str(data.get("restart_mode", "none") or "none").lower().strip()
+    if restart_mode not in _VALID_RESTART:
+        restart_mode = "none"
+
+    backup_paths = [str(p) for p in data.get("backup_paths", []) if str(p).strip()]
+    service = _scrub(data.get("service"))
+    validate_cmd = _real_command(data.get("validate_cmd"))
+
+    # Transactional scaffolding only makes sense for config/service findings.
+    # Strip it from package-CVE findings, where the model tends to hallucinate
+    # unrelated config backups / service restarts.
+    if finding.source not in _CONFIG_SOURCES:
+        backup_paths, validate_cmd, service, restart_mode = [], None, None, "none"
+
     rem = Remediation(
-        summary=str(data.get("summary", "")),
-        explanation=str(data.get("explanation", "")),
-        commands=[str(c) for c in data.get("commands", []) if str(c).strip()],
-        config_changes=[str(c) for c in data.get("config_changes", [])],
-        verification=data.get("verification"),
+        summary=_scrub(data.get("summary")) or "",
+        explanation=_scrub(data.get("explanation")) or "",
+        commands=commands,
+        config_changes=[s for s in (_scrub(c) for c in data.get("config_changes", []))
+                        if s],
+        verification=_real_command(data.get("verification")),
         requires_reboot=bool(data.get("requires_reboot", False)),
         risk=str(data.get("risk", "unknown")).lower(),
         confidence=float(data.get("confidence", 0.0) or 0.0),
         provider=provider.name,
         model=provider.model,
-        backup_paths=[str(p) for p in data.get("backup_paths", []) if str(p).strip()],
-        service=(str(data["service"]).strip() or None) if data.get("service") else None,
-        validate_cmd=(str(data["validate_cmd"]).strip() or None)
-        if data.get("validate_cmd") else None,
-        restart_mode=str(data.get("restart_mode", "none") or "none").lower(),
+        backup_paths=backup_paths,
+        service=service,
+        validate_cmd=validate_cmd,
+        restart_mode=restart_mode,
         rollback_commands=[str(c) for c in data.get("rollback_commands", [])
                            if str(c).strip()],
     )
@@ -181,12 +287,17 @@ def _run(cmd: str, timeout: int = 1800) -> Dict[str, object]:
             timeout=timeout,
             check=False,
         )
-        return {
-            "command": cmd,
-            "status": "ok" if proc.returncode == 0 else "failed",
-            "returncode": proc.returncode,
-            "detail": proc.stdout[-4000:],
-        }
+        status = "ok" if proc.returncode == 0 else "failed"
+        detail = proc.stdout[-4000:]
+        # A dnf/yum update that exits 0 but reports "Nothing to do" changed
+        # nothing (often a malformed/irrelevant advisory) — not a real success.
+        if (status == "ok" and ("dnf" in cmd or "yum" in cmd)
+                and _NOTHING_DONE_RE.search(proc.stdout)):
+            status = "no-change"
+            detail = ("dnf reported 'Nothing to do' — no package was updated "
+                      "(the advisory may not apply to this host).\n" + detail)
+        return {"command": cmd, "status": status,
+                "returncode": proc.returncode, "detail": detail}
     except Exception as exc:  # noqa: BLE001
         return {"command": cmd, "status": "error", "detail": str(exc)}
 
@@ -250,14 +361,21 @@ def _is_transactional(rem: Remediation) -> bool:
 # --------------------------------------------------------------------------- #
 # Apply: simple (package) and transactional (config/service) paths.
 # --------------------------------------------------------------------------- #
+StepCallback = Optional[Callable[[Dict[str, object]], None]]
+
+
 def apply(finding: Finding, dry_run: bool = False,
-          state_dir: Optional[str] = None) -> bool:
+          state_dir: Optional[str] = None, on_step: StepCallback = None) -> bool:
     """Apply the approved remediation for a finding.
 
     Package fixes (no transactional metadata) run command-by-command as before.
     Config/service fixes (backup_paths/service/validate_cmd present) run
     transactionally: snapshot -> commands -> validate -> reload -> verify, with
     automatic rollback on any failure. Returns True on success (or dry-run).
+
+    `on_step`, if given, is called with each result dict the moment that step
+    finishes (backup, every command, validate, reload, health check, rollback),
+    so a caller can stream live progress instead of waiting for the whole apply.
     """
     rem = finding.remediation
     if rem is None:
@@ -265,35 +383,49 @@ def apply(finding: Finding, dry_run: bool = False,
     rem.apply_results = []
     rem.rolled_back = False
     if _is_transactional(rem):
-        return _apply_transactional(finding, dry_run, state_dir)
-    return _apply_simple(rem, dry_run)
+        return _apply_transactional(finding, dry_run, state_dir, on_step)
+    return _apply_simple(rem, dry_run, on_step)
 
 
-def _apply_simple(rem: Remediation, dry_run: bool) -> bool:
+def _emit(results: List[Dict[str, object]], res: Dict[str, object],
+          on_step: StepCallback) -> Dict[str, object]:
+    """Record a step result and stream it to the callback. Returns the result."""
+    results.append(res)
+    if on_step is not None:
+        on_step(res)
+    return res
+
+
+def _apply_simple(rem: Remediation, dry_run: bool,
+                  on_step: StepCallback = None) -> bool:
     ok = True
     for cmd in rem.commands:
         reason = screen_command(cmd)
         if reason:
-            rem.apply_results.append({"command": cmd, "status": "blocked",
-                                      "detail": reason})
+            _emit(rem.apply_results,
+                  {"command": cmd, "status": "blocked", "detail": reason}, on_step)
             ok = False
             continue
         if dry_run:
-            rem.apply_results.append({"command": cmd, "status": "dry-run",
-                                      "detail": "not executed"})
+            _emit(rem.apply_results,
+                  {"command": cmd, "status": "dry-run", "detail": "not executed"},
+                  on_step)
             continue
-        res = _run(cmd)
+        res = _emit(rem.apply_results, _run(cmd), on_step)
         ok = ok and res["status"] == "ok"
-        rem.apply_results.append(res)
     rem.applied = not dry_run and ok
     return ok
 
 
 def _apply_transactional(finding: Finding, dry_run: bool,
-                         state_dir: Optional[str]) -> bool:
+                         state_dir: Optional[str],
+                         on_step: StepCallback = None) -> bool:
     rem = finding.remediation
     assert rem is not None
     results = rem.apply_results
+
+    def emit(res: Dict[str, object]) -> Dict[str, object]:
+        return _emit(results, res, on_step)
 
     # Screen every command (incl. validate) up front: a blocked command must
     # abort before we touch anything on disk.
@@ -301,23 +433,22 @@ def _apply_transactional(finding: Finding, dry_run: bool,
     for cmd in to_screen:
         reason = screen_command(cmd)
         if reason:
-            results.append({"command": cmd, "status": "blocked", "detail": reason})
+            emit({"command": cmd, "status": "blocked", "detail": reason})
             rem.applied = False
             return False
 
     if dry_run:
         if rem.backup_paths:
-            results.append({"command": f"backup {', '.join(rem.backup_paths)}",
-                            "status": "dry-run", "detail": "not executed"})
+            emit({"command": f"backup {', '.join(rem.backup_paths)}",
+                  "status": "dry-run", "detail": "not executed"})
         for cmd in rem.commands:
-            results.append({"command": cmd, "status": "dry-run",
-                            "detail": "not executed"})
+            emit({"command": cmd, "status": "dry-run", "detail": "not executed"})
         if rem.validate_cmd:
-            results.append({"command": f"validate: {rem.validate_cmd}",
-                            "status": "dry-run", "detail": "not executed"})
+            emit({"command": f"validate: {rem.validate_cmd}",
+                  "status": "dry-run", "detail": "not executed"})
         if rem.service and rem.restart_mode in ("reload", "restart"):
-            results.append({"command": f"systemctl {rem.restart_mode} {rem.service}",
-                            "status": "dry-run", "detail": "not executed"})
+            emit({"command": f"systemctl {rem.restart_mode} {rem.service}",
+                  "status": "dry-run", "detail": "not executed"})
         rem.applied = False
         return True
 
@@ -325,49 +456,47 @@ def _apply_transactional(finding: Finding, dry_run: bool,
     if rem.backup_paths:
         dest = os.path.join(state_dir or os.getcwd(), "backups", finding.id,
                             time.strftime("%Y%m%d-%H%M%S"))
-        results.append(_snapshot(rem.backup_paths, dest))
+        emit(_snapshot(rem.backup_paths, dest))
         rem.backup_dir = dest
 
     def _rollback(reason: str) -> bool:
-        results.append({"command": "ROLLBACK", "status": "rolled-back",
-                        "detail": reason})
+        emit({"command": "ROLLBACK", "status": "rolled-back", "detail": reason})
         if rem.backup_dir:
-            results.extend(_restore(rem.backup_dir))
+            for r in _restore(rem.backup_dir):
+                emit(r)
         for rc in rem.rollback_commands:
             if not screen_command(rc):
-                results.append(_run(rc))
+                emit(_run(rc))
         # Revert runtime state from the restored config. daemon-reload first so
         # a removed/restored unit drop-in actually takes effect before restart.
         if rem.service and rem.restart_mode in ("reload", "restart"):
-            results.append(_run("systemctl daemon-reload"))
-            results.append(_systemctl(rem.restart_mode, rem.service))
+            emit(_run("systemctl daemon-reload"))
+            emit(_systemctl(rem.restart_mode, rem.service))
         rem.applied = False
         rem.rolled_back = True
         return False
 
-    # 2. Run the change commands.
+    # 2. Run the change commands. "no-change" (dnf nothing-to-do) is surfaced
+    # but is not a failure, so it does not trigger a rollback.
     for cmd in rem.commands:
-        res = _run(cmd)
-        results.append(res)
-        if res["status"] != "ok":
+        res = emit(_run(cmd))
+        if res["status"] not in ("ok", "no-change"):
             return _rollback(f"command failed: {cmd}")
 
     # 3. Validate the new config BEFORE (re)starting — prevents service lockout.
     if rem.validate_cmd:
         res = _run(rem.validate_cmd)
         res["command"] = f"validate: {rem.validate_cmd}"
-        results.append(res)
+        emit(res)
         if res["status"] != "ok":
             return _rollback(f"validation failed: {rem.validate_cmd}")
 
     # 4. Apply via the service manager and confirm it stays healthy.
     if rem.service and rem.restart_mode in ("reload", "restart"):
-        res = _systemctl(rem.restart_mode, rem.service)
-        results.append(res)
+        res = emit(_systemctl(rem.restart_mode, rem.service))
         if res["status"] != "ok":
             return _rollback(f"{rem.restart_mode} {rem.service} failed")
-        health = _systemctl("is-active", rem.service)
-        results.append(health)
+        health = emit(_systemctl("is-active", rem.service))
         if health["status"] != "ok":
             return _rollback(f"{rem.service} not active after {rem.restart_mode}")
 
@@ -375,7 +504,7 @@ def _apply_transactional(finding: Finding, dry_run: bool,
     if rem.verification and not screen_command(rem.verification):
         res = _run(rem.verification)
         res["command"] = f"verify: {rem.verification}"
-        results.append(res)
+        emit(res)
 
     rem.applied = True
     return True

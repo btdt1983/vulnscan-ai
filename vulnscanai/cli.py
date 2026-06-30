@@ -304,6 +304,17 @@ def _approve(finding: Finding, auto: bool) -> str:
     return {"y": "yes", "a": "all", "q": "quit"}.get(ans, "no")
 
 
+def _print_step(r: dict) -> None:
+    """Stream one apply step (command + its output) to the operator, live."""
+    status = str(r.get("status", "?"))
+    print(f"    [{status}] {r.get('command', '')}", flush=True)
+    detail = str(r.get("detail") or "").strip()
+    # Skip the noise lines; show real command output / errors / block reasons.
+    if detail and detail != "not executed":
+        for line in detail.splitlines():
+            print(f"        {line}", flush=True)
+
+
 def cmd_fix(cfg: Config, args) -> int:
     if args.scan:
         print(f"Scanning {_hostname()} ...")
@@ -361,10 +372,10 @@ def cmd_fix(cfg: Config, args) -> int:
         if decision != "yes":
             print("  skipped.")
             continue
-        ok = remediation.apply(f, dry_run=dry, state_dir=cfg.state_dir)
+        print(f"  {'(dry-run) ' if dry else ''}Applying ...")
+        ok = remediation.apply(f, dry_run=dry, state_dir=cfg.state_dir,
+                               on_step=_print_step)
         applied += 1 if ok else 0
-        for r in (f.remediation.apply_results if f.remediation else []):
-            print(f"    [{r['status']}] {r['command']}")
         if f.remediation and f.remediation.rolled_back:
             rolled += 1
             print("    ROLLED BACK — change reverted, service left healthy.")

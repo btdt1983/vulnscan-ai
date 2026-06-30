@@ -182,6 +182,20 @@ and **automatically restores the backup if any step fails** (e.g. an sshd edit
 that would lock you out). Backups live under `<state-dir>/backups/<id>/`; undo a
 successful fix later with [`rollback`](#rollback).
 
+**Live progress.** While a fix is applied, each step is streamed as it runs —
+the backup, every command, the validate step, the service reload and health
+check — together with the command's own output, so you can watch exactly what it
+does instead of staring at a frozen prompt. A rollback (if triggered) prints the
+same way.
+
+**Sanitised plans.** AI proposals are cleaned before they can run: an invalid
+`restart_mode` is normalised, echoed schema placeholders and non-command
+"verify" strings are dropped, a malformed `--advisory=` id is rewritten to the
+finding's real advisory, and package-CVE fixes (`dnf`/`oscap`) cannot carry
+unrelated config backups or service restarts (those belong to config scanners).
+A `dnf update` that reports **"Nothing to do"** is shown as `[no-change]` (not a
+false success), so you can tell when an advisory didn't actually apply.
+
 ```
 vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
                 [--min-severity SEV] [--yes] [--dry-run] [--pdf PATH]

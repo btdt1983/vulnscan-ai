@@ -220,6 +220,47 @@ class TestTransactionalApply(unittest.TestCase):
             self.assertEqual(open(target).read().strip(), "ORIGINAL")
             self.assertTrue(f.remediation.rolled_back)
 
+    def test_on_step_streams_each_result_live(self):
+        # The on_step callback must fire once per recorded step, in order, with
+        # the same dicts (incl. command output detail) collected in apply_results.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(
+                tmp, commands=["sed -i s/ORIGINAL/HARDENED/ " + target],
+                validate_cmd="true")
+            seen = []
+            ok = apply(f, dry_run=False, state_dir=tmp,
+                       on_step=lambda r: seen.append(r))
+            self.assertTrue(ok)
+            self.assertEqual(seen, f.remediation.apply_results)   # same, in order
+            self.assertTrue(any(r["command"].startswith("backup") for r in seen))
+            self.assertTrue(any(r["command"].startswith("validate:") for r in seen))
+
+    def test_on_step_simple_path_reports_output(self):
+        f = _finding(source="dnf", package="bash", cve_ids=["CVE-1"], title="x")
+        f.remediation = Remediation(commands=["echo hello-from-fix"])
+        seen = []
+        apply(f, dry_run=False, on_step=lambda r: seen.append(r))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["status"], "ok")
+        self.assertIn("hello-from-fix", seen[0]["detail"])   # captured output
+
+    def test_no_change_status_for_dnf_nothing_to_do(self):
+        # A dnf/yum command that exits 0 but says "Nothing to do" must be
+        # reported as no-change, not a false [ok]. (echo stands in for dnf; the
+        # command string contains "dnf" and the output matches the marker.)
+        from vulnscanai.remediation import _run
+        res = _run("echo dnf: Nothing to do")
+        self.assertEqual(res["status"], "no-change")
+        self.assertIn("no package was updated", res["detail"])
+
+    def test_no_change_counts_as_not_applied(self):
+        f = _finding(source="dnf", package="x", cve_ids=["CVE-1"], title="x")
+        f.remediation = Remediation(commands=["echo dnf: Nothing to do"])
+        ok = apply(f, dry_run=False)
+        self.assertFalse(ok)                       # surfaced as not applied
+        self.assertFalse(f.remediation.applied)
+
     def test_rollback_runs_daemon_reload_before_restart(self):
         # systemd drop-ins only take effect after daemon-reload; the rollback
         # must reload before restarting. Uses a guaranteed-nonexistent unit so
@@ -1234,6 +1275,87 @@ class TestWebrootScanner(unittest.TestCase):
     def test_registered(self):
         from vulnscanai.scanners import SCANNERS
         self.assertIn("webroot", SCANNERS)
+
+
+class TestRemediationSanitize(unittest.TestCase):
+    """propose() must clean up weak-model output: placeholder echoes, a bogus
+    restart_mode, hallucinated transactional scaffolding on package fixes, and
+    invented advisory ids."""
+
+    class _FakeProvider:
+        name = "fake"
+        model = "fake"
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def complete(self, system, user):
+            return self._payload
+
+    def _propose(self, payload, **finding_kw):
+        from vulnscanai.remediation import propose
+        f = _finding(**finding_kw)
+        return propose(self._FakeProvider(payload), f)
+
+    def test_restart_mode_menu_echo_normalised(self):
+        rem = self._propose(
+            '{"summary":"x","restart_mode":"reload|restart|none",'
+            '"service":"sshd","validate_cmd":"sshd -t",'
+            '"backup_paths":["/etc/ssh/sshd_config"]}',
+            source="ssh", title="weak sshd")
+        self.assertEqual(rem.restart_mode, "none")   # junk -> none, not skipped silently
+
+    def test_placeholder_verification_dropped(self):
+        rem = self._propose(
+            '{"summary":"x","verification":"command to confirm the fix"}',
+            source="dnf", title="pkg")
+        # "command to confirm the fix" isn't a real command -> dropped
+        self.assertIsNone(rem.verification)
+
+    def test_angle_placeholder_echo_dropped(self):
+        rem = self._propose(
+            '{"summary":"<one-line summary>","verification":"<command>"}',
+            source="dnf", title="pkg")
+        self.assertEqual(rem.summary, "")
+        self.assertIsNone(rem.verification)
+
+    def test_nonexistent_validate_cmd_dropped(self):
+        rem = self._propose(
+            '{"summary":"x","validate_cmd":"validate nginx version"}',
+            source="ssh", title="cfg")
+        self.assertIsNone(rem.validate_cmd)          # not a real executable
+
+    def test_package_finding_strips_transactional_scaffolding(self):
+        # The urllib3 case: a dnf finding must not carry sshd backups/validate.
+        rem = self._propose(
+            '{"summary":"update urllib3","commands":["dnf update -y python3-urllib3"],'
+            '"backup_paths":["/etc/ssh/sshd_config","/etc/httpd/conf.d/httpd.conf"],'
+            '"validate_cmd":"systemctl restart sshd","service":"sshd",'
+            '"restart_mode":"restart"}',
+            source="dnf", package="python3-urllib3", title="urllib3")
+        self.assertEqual(rem.backup_paths, [])
+        self.assertIsNone(rem.validate_cmd)
+        self.assertIsNone(rem.service)
+        self.assertEqual(rem.restart_mode, "none")
+        self.assertEqual(rem.commands, ["dnf update -y python3-urllib3"])
+
+    def test_advisory_rewritten_from_finding(self):
+        rem = self._propose(
+            '{"summary":"x","commands":["dnf update -y --advisory=ALSAA2026:28973"]}',
+            source="dnf", title="nginx", advisory="ALSA-2026:28973")
+        self.assertEqual(rem.commands,
+                         ["dnf update -y --advisory=ALSA-2026:28973"])
+
+    def test_config_finding_keeps_valid_scaffolding(self):
+        rem = self._propose(
+            '{"summary":"harden","commands":["sed -i s/a/b/ /etc/ssh/sshd_config"],'
+            '"backup_paths":["/etc/ssh/sshd_config"],"validate_cmd":"sshd -t",'
+            '"service":"sshd","restart_mode":"reload"}',
+            source="ssh", title="sshd")
+        self.assertEqual(rem.backup_paths, ["/etc/ssh/sshd_config"])
+        self.assertEqual(rem.restart_mode, "reload")
+        self.assertEqual(rem.service, "sshd")
+        self.assertEqual(rem.validate_cmd, "sshd -t")
 
 
 class TestContainerScanner(unittest.TestCase):

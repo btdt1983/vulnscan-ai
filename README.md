@@ -273,6 +273,10 @@ When a fix touches a **config file or service** (e.g. an sshd hardening finding)
 4. **Reload** the service (preferring `reload` over `restart`) and confirm it stays active.
 5. **Auto-rollback** — if *any* step fails, the backup is restored and the service brought back, so a bad sshd edit can't lock you out.
 
+Every step is **streamed live** as it runs — backup, each command, the validate
+step, the reload/health check (and any rollback) — along with the command's own
+output, so you can see exactly what the fix is doing while it does it.
+
 ```bash
 # AI proposes + applies, with the safety net above
 vulnscan-ai fix --scanner ssh --scan

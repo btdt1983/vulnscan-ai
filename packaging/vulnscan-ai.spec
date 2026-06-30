@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.24
+Version:        0.1.25
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,19 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.25-1
+- fix: stream every apply step live (backup, each command, validate, service
+  reload/health check, rollback) together with the command's own output, so you
+  can see what a fix does while it runs instead of waiting for a silent finish.
+- fix: sanitise AI remediation plans before they can run — normalise an invalid
+  restart_mode (a model echoing "reload|restart|none" no longer silently skips
+  the reload), drop echoed schema placeholders and non-command "verify" strings,
+  rewrite a malformed --advisory= id to the finding's real advisory, and strip
+  config backups/validate/service from package-CVE (dnf/oscap) fixes where the
+  model tends to hallucinate unrelated sshd/httpd scaffolding.
+- fix: a 'dnf update' that reports "Nothing to do" is now shown as [no-change]
+  (not a false [ok]), so an advisory that didn't actually apply is visible.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.24-1
 - New 'container' scanner (7th): inspects running Podman/Docker containers and
   flags unsafe runtime settings CIS-Docker style — --privileged, runtime control

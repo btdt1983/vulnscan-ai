@@ -75,7 +75,9 @@ Also write a SARIF 2.1.0 file.
 .SS fix
 Ask the AI provider to propose remediation, then apply with approval. Proposed
 commands are screened against a safety deny-list. The per-finding prompt accepts
-\fBy\fR (yes), \fBn\fR (no), \fBa\fR (all), or \fBq\fR (quit).
+\fBy\fR (yes), \fBn\fR (no), \fBa\fR (all), or \fBq\fR (quit). During apply each
+step is streamed live (backup, every command, validate, service reload/health
+check, and rollback) together with the command's output.
 .TP
 .B \-\-scan
 Scan first instead of using the last saved findings.
