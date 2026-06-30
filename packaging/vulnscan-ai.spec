@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,16 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.1-1
+- Distro errata feed now covers all three RHEL clones, picked automatically:
+  AlmaLinux (errata RSS), Rocky Linux (RESF/Apollo advisories JSON) and Oracle
+  Linux (year-scoped ELSA OVAL, with bounded decompression as a bomb guard).
+- OVAL auto-refresh: a scan that uses the oscap scanner now downloads the OVAL
+  feed automatically when it is missing or older than oval_max_age_days (default
+  7) — no manual 'update-oval' needed. TTL-gated, fail-soft (falls back to the
+  existing feed), and skipped when offline (--no-enrich) or oval_auto_update is
+  false. New config keys oval_auto_update, oval_max_age_days.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.0-1
 - STABLE release. Exploitation-aware prioritisation: every finding's CVE is
   checked against the CISA KEV catalog (actively exploited in the wild) and the
