@@ -1628,6 +1628,7 @@ class TestPatchedFilter(unittest.TestCase):
         from vulnscanai.models import apply_patched_states
         enr = PatchedStateEnricher(Config())
         enr.upgradable = lambda: {"bash"}            # only bash has an update
+        enr.actionable_advisories = lambda: {"ALSA-2026:2"}   # only :2 actionable
         findings = [
             Finding(source="oscap", package="kernel", advisory="ALSA-2026:1",
                     cve_ids=["CVE-1"], severity="important"),     # patched -> drop
@@ -1643,16 +1644,43 @@ class TestPatchedFilter(unittest.TestCase):
         self.assertEqual({f.package or f.title for f in kept},
                          {"bash", "openssl", "SSH root login"})
 
-    def test_filter_noop_when_check_update_unknown(self):
+    def test_oscap_finding_dropped_by_advisory(self):
+        # oscap findings carry an advisory but NO package — the bug fix: match on
+        # the advisory against the actionable set.
         from vulnscanai.scanners.applicability import PatchedStateEnricher
         from vulnscanai.models import apply_patched_states
         enr = PatchedStateEnricher(Config())
-        enr.upgradable = lambda: None                # error -> drop nothing
+        enr.upgradable = lambda: set()
+        enr.actionable_advisories = lambda: {"ALSA-2026:9"}
+        findings = [
+            Finding(source="oscap", package=None, advisory="ALSA-2026:25217",
+                    cve_ids=["CVE-1"], severity="important"),     # not actionable -> drop
+            Finding(source="oscap", package=None, advisory="ALSA-2026:9",
+                    cve_ids=["CVE-2"], severity="important")]     # actionable -> keep
+        enr.enrich(findings)
+        kept, dropped = apply_patched_states(findings)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([f.advisory for f in kept], ["ALSA-2026:9"])
+
+    def test_filter_noop_when_signals_unknown(self):
+        from vulnscanai.scanners.applicability import PatchedStateEnricher
+        from vulnscanai.models import apply_patched_states
+        enr = PatchedStateEnricher(Config())
+        enr.upgradable = lambda: None                # both signals unavailable
+        enr.actionable_advisories = lambda: None     # -> drop nothing
         f = Finding(source="dnf", package="kernel", advisory="ALSA-2026:1",
                     severity="important")
         enr.enrich([f])
         self.assertFalse(f.already_patched)
         self.assertEqual(apply_patched_states([f]), ([f], 0))
+
+    def test_parse_updateinfo_advisories(self):
+        from vulnscanai.scanners.applicability import parse_updateinfo_advisories
+        out = ("Last metadata expiration check: 0:01 ago.\n"
+               "ALSA-2026:25217 Important/Sec. kernel-5.14.x.rpm\n"
+               "RHSA-2026:9 Moderate/Sec.  bash-5.1.rpm\n")
+        self.assertEqual(parse_updateinfo_advisories(out),
+                         {"ALSA-2026:25217", "RHSA-2026:9"})
 
 
 class TestBaselineIgnoreAction(unittest.TestCase):

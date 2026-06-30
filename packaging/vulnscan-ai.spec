@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.2.2
+Version:        0.2.3
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,16 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.3-1
+- BUGFIX (0.2.2 already-patched filter): the filter matched on package name
+  only, so it never caught 'oscap' findings (which carry an advisory but no
+  package) — the lingering-old-kernel ALSA advisories still showed up. The
+  filter now also consults 'dnf updateinfo list --updates' (the realistic
+  installable-advisory set) and drops a finding when its advisory isn't actionable;
+  both signals are considered and it stays fail-safe. 'fix' now applies the filter
+  to the saved findings too, so already-patched advisories no longer waste an AI
+  proposal or a no-op apply even without re-scanning.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.2-1
 - STABLE. Already-patched filter: a package finding whose fix is in the repo
   metadata but has no installable update per 'dnf check-update' is dropped — the

@@ -405,6 +405,17 @@ def cmd_fix(cfg: Config, args) -> int:
                            extra_ignores=getattr(args, "ignore", None))
     else:
         findings = _load_findings(cfg)
+        # The saved findings may predate a patch (or this filter): re-check so we
+        # don't ask the AI to "fix" — or no-op apply — advisories the host has
+        # already resolved (the lingering-old-kernel case).
+        if getattr(cfg, "patched_filter", True) and findings:
+            enricher = PatchedStateEnricher(cfg)
+            if enricher.available():
+                enricher.enrich(findings)
+                findings, patched = apply_patched_states(findings)
+                if patched:
+                    _eprint(f"  - {patched} already-patched finding(s) skipped "
+                            f"(no installable update)")
     if not findings:
         return 1
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)

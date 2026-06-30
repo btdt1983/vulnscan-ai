@@ -20,6 +20,7 @@ determined, nothing is dropped.
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Set
 
 from ..models import VENDOR_NO_FIX_STATES, Finding
@@ -27,6 +28,8 @@ from .base import have, run
 
 _ARCHES = {"x86_64", "noarch", "i686", "i386", "aarch64", "ppc64le", "s390x",
            "src"}
+_ADVISORY_RE = re.compile(
+    r"(?:RH[SBE]A|AL[SBE]A|ELSA|RLSA|CESA)-?\d{4}[:\-]\d+", re.I)
 
 
 def parse_check_update(text: str) -> Set[str]:
@@ -48,6 +51,16 @@ def parse_check_update(text: str) -> Set[str]:
     return names
 
 
+def parse_updateinfo_advisories(text: str) -> Set[str]:
+    """Advisory ids from `dnf updateinfo list` output (one per line, col 1)."""
+    out: Set[str] = set()
+    for line in text.splitlines():
+        m = _ADVISORY_RE.match(line.strip())
+        if m:
+            out.add(m.group(0))
+    return out
+
+
 class PatchedStateEnricher:
     name = "patched"
 
@@ -57,29 +70,53 @@ class PatchedStateEnricher:
     def available(self) -> bool:
         return have("dnf") or have("yum")
 
+    def _pm(self) -> str:
+        return "dnf" if have("dnf") else "yum"
+
     def upgradable(self) -> Optional[Set[str]]:
-        """The set of packages with an installable update, or None on error."""
-        pm = "dnf" if have("dnf") else "yum"
-        rc, out, _ = run([pm, "-q", "check-update"], timeout=180)
+        """Packages with an installable update, or None on error."""
+        rc, out, _ = run([self._pm(), "-q", "check-update"], timeout=180)
         # 0 = nothing to update, 100 = updates listed; anything else is an error
         # (no repos, network down) -> signal "unknown" so we drop nothing.
         if rc not in (0, 100):
             return None
         return parse_check_update(out)
 
+    def actionable_advisories(self) -> Optional[Set[str]]:
+        """Advisory ids that actually have an installable update, or None.
+
+        `updateinfo list --updates` is the realistic set: it excludes advisories
+        already satisfied by an installed (or newer) build — unlike `--available`,
+        which still lists a superseded kernel advisory.
+        """
+        rc, out, _ = run([self._pm(), "-q", "updateinfo", "list", "--updates"],
+                         timeout=180)
+        if rc not in (0, 100):
+            return None
+        return parse_updateinfo_advisories(out)
+
     def enrich(self, findings: List[Finding]) -> List[Finding]:
         upgradable = self.upgradable()
-        if upgradable is None:
-            return findings
+        actionable = self.actionable_advisories()
+        if upgradable is None and actionable is None:
+            return findings                      # no usable signal -> drop nothing
         for f in findings:
-            if f.source not in ("dnf", "oscap") or not f.package:
+            if f.source not in ("dnf", "oscap"):
                 continue
-            # Only act on findings that carry a real fix (came from repo
-            # metadata); leave won't-fix advisories for manual mitigation.
-            if not (f.advisory or f.fixed_version):
+            # Only act on findings that carry a real fix (repo metadata);
+            # leave won't-fix advisories for manual mitigation.
+            if not (f.advisory or f.fixed_version or f.package):
                 continue
             if (f.vendor_fix_state or "").strip().lower() in VENDOR_NO_FIX_STATES:
                 continue
-            if f.package not in upgradable:
+            # Collect every authoritative "is this actionable?" signal we have
+            # for this finding; drop only when ALL of them say no. oscap findings
+            # carry an advisory but no package, so the advisory signal is key.
+            signals = []
+            if f.package and upgradable is not None:
+                signals.append(f.package in upgradable)
+            if f.advisory and actionable is not None:
+                signals.append(f.advisory in actionable)
+            if signals and not any(signals):
                 f.already_patched = True
         return findings
