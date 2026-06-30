@@ -13,12 +13,13 @@ from vulnscanai import export, export_fix, report
 from vulnscanai.ai.base import extract_json
 import io
 
-from vulnscanai import branding, dashboard, notify
+from vulnscanai import branding, dashboard, feeds, notify
 from vulnscanai.config import Config
 from vulnscanai.models import (
-    Finding, Remediation, apply_ignores, apply_service_states,
-    apply_vendor_states, dedup_cross_scanner, diff_findings, findings_from_json,
-    findings_to_json, match_ignore, merge_findings, severity_rank,
+    Finding, Remediation, apply_exploit_priority, apply_ignores,
+    apply_service_states, apply_vendor_states, dedup_cross_scanner,
+    diff_findings, findings_from_json, findings_to_json, match_ignore,
+    merge_findings, severity_rank,
 )
 from vulnscanai.scanners.runtime_state import ServiceStateEnricher
 from vulnscanai.scanners.nvd import (
@@ -1473,6 +1474,149 @@ class TestContainerScanner(unittest.TestCase):
     def test_registered(self):
         from vulnscanai.scanners import SCANNERS
         self.assertIn("container", SCANNERS)
+
+
+class TestFeedsParsers(unittest.TestCase):
+    def test_parse_kev(self):
+        data = {"vulnerabilities": [
+            {"cveID": "CVE-2026-9256", "vendorProject": "F5", "product": "nginx",
+             "vulnerabilityName": "nginx RCE", "dateAdded": "2026-06-20",
+             "shortDescription": "allows RCE", "knownRansomwareCampaignUse": "Known"},
+            {"cveID": "CVE-2026-1", "dateAdded": "2026-06-25"}]}
+        items = feeds.parse_kev(data)
+        self.assertEqual(items[0].published, "2026-06-25")   # newest first
+        kev = [i for i in items if i.cve_ids == ["CVE-2026-9256"]][0]
+        self.assertTrue(kev.exploited)
+        self.assertEqual(kev.source, "kev")
+        self.assertTrue(kev.summary.startswith("[known ransomware use]"))
+
+    def test_parse_nvd_severity(self):
+        data = {"vulnerabilities": [{"cve": {
+            "id": "CVE-2026-2", "published": "2026-06-29T00:00:00",
+            "descriptions": [{"lang": "en", "value": "heap overflow"}],
+            "metrics": {"cvssMetricV31": [{"cvssData":
+                {"baseSeverity": "HIGH", "baseScore": 8.1}}]}}}]}
+        it = feeds.parse_nvd(data)[0]
+        self.assertEqual(it.severity, "important")     # HIGH -> important
+        self.assertEqual(it.cve_ids, ["CVE-2026-2"])
+        self.assertEqual(it.published, "2026-06-29")
+
+    def test_parse_epss(self):
+        scores = feeds.parse_epss({"data": [
+            {"cve": "CVE-2021-44228", "epss": "0.97"},
+            {"cve": "bad", "epss": "n/a"}]})
+        self.assertEqual(scores, {"CVE-2021-44228": 0.97})
+
+    def test_parse_errata_rss(self):
+        rss = ('<rss><channel><item>'
+               '<title>ALSA-2026:289 Important: nginx security update</title>'
+               '<link>https://errata.almalinux.org/9/ALSA-2026-289.html</link>'
+               '<description>Fixes CVE-2026-9256</description>'
+               '<pubDate>Mon, 29 Jun 2026 12:00:00 +0000</pubDate>'
+               '</item></channel></rss>')
+        it = feeds.parse_errata_rss(rss, "alma")[0]
+        self.assertEqual(it.severity, "important")
+        self.assertEqual(it.published, "2026-06-29")
+        self.assertIn("CVE-2026-9256", it.cve_ids)
+
+    def test_parse_errata_rss_malformed(self):
+        self.assertEqual(feeds.parse_errata_rss("not xml", "alma"), [])
+
+    def test_dedupe_prefers_exploited(self):
+        nvd = feeds.NewsItem(id="nvd:CVE-1", source="nvd", title="x",
+                             cve_ids=["CVE-1"])
+        kev = feeds.NewsItem(id="kev:CVE-1", source="kev", title="x",
+                             cve_ids=["CVE-1"], exploited=True)
+        merged = feeds._dedupe([nvd, kev])
+        self.assertEqual(len(merged), 1)
+        self.assertTrue(merged[0].exploited)
+
+    def test_cache_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Config(state_dir=tmp)
+            items = [feeds.NewsItem(id="kev:CVE-1", source="kev", title="t",
+                                    cve_ids=["CVE-1"], exploited=True, epss=0.9)]
+            feeds.save_cache(cfg, items, "2026-06-30 10:00 UTC")
+            got, when = feeds.load_cache(cfg)
+            self.assertEqual(when, "2026-06-30 10:00 UTC")
+            self.assertEqual(got[0].cve_ids, ["CVE-1"])
+            self.assertTrue(got[0].exploited)
+            self.assertEqual(got[0].epss, 0.9)
+            self.assertEqual(oct(os.stat(feeds._cache_path(cfg)).st_mode & 0o777),
+                             "0o600")
+
+
+class TestExploitEnrichment(unittest.TestCase):
+    def test_exploited_raised_to_important(self):
+        f = _finding(source="dnf", severity="moderate", cve_ids=["CVE-1"])
+        f.exploited = True
+        out, raised = apply_exploit_priority([f])
+        self.assertEqual(raised, 1)
+        self.assertEqual(f.severity, "important")
+        self.assertEqual(f.raw["severity_before_exploit"], "moderate")
+        self.assertIn("[exploited]", f.description)
+
+    def test_exploited_high_severity_not_lowered(self):
+        f = _finding(severity="critical", cve_ids=["CVE-1"])
+        f.exploited = True
+        apply_exploit_priority([f])
+        self.assertEqual(f.severity, "critical")    # never downgraded
+
+    def test_epss_annotated_not_raised(self):
+        f = _finding(severity="low", cve_ids=["CVE-1"])
+        f.epss = 0.8
+        out, raised = apply_exploit_priority([f])
+        self.assertEqual(raised, 0)
+        self.assertEqual(f.severity, "low")         # EPSS never raises severity
+        self.assertIn("[epss]", f.description)
+
+    def test_enricher_sets_fields(self):
+        # Stub the network lookups so the test stays offline.
+        f = _finding(cve_ids=["CVE-2021-44228"])
+        orig_kev, orig_epss = feeds.kev_cve_set, feeds.epss_scores
+        feeds.kev_cve_set = lambda cfg: {"CVE-2021-44228"}
+        feeds.epss_scores = lambda cves, cfg: {"CVE-2021-44228": 0.97}
+        try:
+            from vulnscanai.scanners.exploit import ExploitEnricher
+            ExploitEnricher(Config()).enrich([f])
+        finally:
+            feeds.kev_cve_set, feeds.epss_scores = orig_kev, orig_epss
+        self.assertTrue(f.exploited)
+        self.assertEqual(f.epss, 0.97)
+
+
+class TestNewsRender(unittest.TestCase):
+    def _items(self):
+        return [
+            feeds.NewsItem(id="kev:CVE-9", source="kev", title="nginx RCE",
+                           severity="important", url="https://x",
+                           cve_ids=["CVE-2026-9256"], exploited=True, epss=0.97),
+            feeds.NewsItem(id="nvd:CVE-1", source="nvd",
+                           title="bug <script>alert(1)</script>",
+                           severity="moderate", url="https://y",
+                           summary="oops <img src=x>", cve_ids=["CVE-2026-1"])]
+
+    def test_escapes_feed_content(self):
+        html = dashboard.render_news(self._items(), "now", "host")
+        self.assertNotIn("<script>alert", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_badges_and_relevance(self):
+        html = dashboard.render_news(self._items(), "now", "host",
+                                     relevant_cves={"CVE-2026-9256"})
+        self.assertIn("EXPLOITED", html)
+        self.assertIn("ON THIS HOST", html)
+        self.assertIn("Relevant to this host", html)
+
+    def test_source_filter(self):
+        html = dashboard.render_news(self._items(), "now", "host",
+                                     source_filter="kev")
+        self.assertIn("nginx RCE", html)
+        self.assertNotIn("CVE-2026-1", html)        # nvd item filtered out
+
+    def test_disabled_state(self):
+        html = dashboard.render_news(self._items(), "", "host", enabled=False)
+        self.assertIn("news_enabled", html)
 
 
 if __name__ == "__main__":

@@ -143,6 +143,40 @@ Retain only the newest N reports (default 30).
 .TP
 .BI \-\-fail\-on " SEVERITY"
 Exit 3 if any finding is at or above this severity.
+.SS dashboard
+Serve the saved findings over a local HTTPS login dashboard (stdlib only,
+self-signed certificate). Includes an \fBAdvisories\fR tab with recent
+vulnerability news. Localhost-only unless an allow-list is configured.
+.TP
+.B \-\-set\-password
+Prompt for and store the admin password, then exit.
+.TP
+.BI \-\-user " NAME"
+Admin username (default \fBadmin\fR).
+.TP
+.BI \-\-port " PORT"
+Listen port (default 65101).
+.TP
+.BI \-\-allow ", " \-\-deny " IP/CIDR"
+Permit / remove a network client (besides loopback).
+.TP
+.B \-\-list
+Show dashboard settings, then exit.
+.SS news
+Show recent vulnerability advisories aggregated from public feeds: CISA KEV
+(actively exploited), NIST NVD (recent CVEs) and the host distribution's errata.
+Locally-relevant advisories (matching the last scan) are flagged. The same feeds
+flag scan findings that are actively exploited (CISA KEV) and carry an EPSS
+exploit-probability score.
+.TP
+.BI \-\-source " NAME"
+Show only one feed source: \fBkev\fR, \fBnvd\fR, or \fBdistro\fR.
+.TP
+.B \-\-refresh
+Fetch fresh data instead of using the on-disk cache.
+.TP
+.BI \-\-limit " N"
+Maximum advisories to show (default 30).
 .SH EXIT STATUS
 .TP
 .B 0

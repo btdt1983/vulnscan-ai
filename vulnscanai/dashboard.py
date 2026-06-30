@@ -36,7 +36,8 @@ from http.cookies import SimpleCookie
 from typing import List, Optional
 from urllib.parse import parse_qs
 
-from . import __version__
+from . import __version__, feeds
+from .feeds import NewsItem
 from .models import Finding, findings_from_json, severity_rank
 
 PBKDF2_ITERS = 200_000
@@ -248,6 +249,9 @@ button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.5rem .9
 .scanbtn{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:.45rem .9rem;
   font-size:.88rem;cursor:pointer}.scanbtn:hover{background:#0a4bbf}
 .scanbtn[disabled]{opacity:.6;cursor:default}
+.chip{display:inline-block;font-size:.78rem;background:#eef1f6;color:#3a4760;
+  padding:.12rem .55rem;border-radius:999px;text-decoration:none;margin:0 .1rem}
+.chip.on{background:#1f6feb;color:#fff}
 .flash{background:#eef4ff;border:1px solid #cfe0ff;border-radius:8px;padding:.6rem .9rem;
   margin:1rem 0;font-size:.92rem}
 .ok{color:#1a7f37}.bad{color:#b3261e}
@@ -443,8 +447,8 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
 <body>
 <header><div class="wrap">{logo_svg(22)} <b>vulnscan&middot;ai</b> dashboard
   <span class=meta style="color:#9fb0c8">{html.escape(host)} &middot; {html.escape(scanned_at)} &middot; v{__version__}</span>
-  <span class=spacer></span>
-  <form class="inline" method=post action="/scan">{scan_btn}</form>
+  <span class=spacer></span>{_news_nav("dashboard")}
+  &nbsp;<form class="inline" method=post action="/scan">{scan_btn}</form>
   &nbsp;<a href="/logout">Sign out</a></div></header>
 <div class="wrap">
   {flash}
@@ -457,6 +461,98 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
       <button>Add host</button>
     </form>
   </div>
+</div>{_BUSY_OVERLAY}</body></html>"""
+
+
+def _news_card(it: NewsItem, *, relevant: bool = False) -> str:
+    """One advisory card. ALL feed-supplied text is escaped (untrusted input)."""
+    sev = (it.severity or "unknown").lower()
+    color = _SEV_COLOR.get(sev, "#5b6675")
+    badges = [f'<span class="badge" style="background:{color}">{html.escape(sev)}</span>']
+    if it.exploited:
+        badges.append('<span class="badge" style="background:#b3001b">EXPLOITED</span>')
+    if it.epss is not None and it.epss >= 0.5:
+        badges.append(f'<span class="badge" style="background:#7a5b00">'
+                      f'EPSS {it.epss:.0%}</span>')
+    if relevant:
+        badges.append('<span class="badge" style="background:#0b6b3a">ON THIS HOST</span>')
+    meta = [f"source: {html.escape(it.source)}"]
+    if it.published:
+        meta.append(html.escape(it.published))
+    if it.cve_ids:
+        meta.append(", ".join(
+            f'<a href="https://nvd.nist.gov/vuln/detail/{html.escape(c)}" '
+            f'target=_blank rel=noopener>{html.escape(c)}</a>' for c in it.cve_ids[:6]))
+    link = (f'<a href="{html.escape(it.url)}" target=_blank rel=noopener>details &rarr;</a>'
+            if it.url.startswith(("http://", "https://")) else "")
+    return (f'<div class="f" style="border-left-color:{color}">'
+            f'<h3>{"".join(badges)} {html.escape(it.title or "(untitled)")}</h3>'
+            f'<div class="meta">{" &middot; ".join(meta)}</div>'
+            f'<div class="desc">{html.escape(it.summary or "")}</div>'
+            f'<div class="meta">{link}</div></div>')
+
+
+def _news_nav(active: str) -> str:
+    def lk(href, label, key):
+        cls = ' style="color:#fff;font-weight:700"' if key == active else ""
+        return f'<a href="{href}"{cls}>{label}</a>'
+    return (f'{lk("/", "Dashboard", "dashboard")} &nbsp; '
+            f'{lk("/news", "Advisories", "news")}')
+
+
+def render_news(items: List[NewsItem], fetched_at: str, host: str, *,
+                relevant_cves: Optional[set] = None, source_filter: str = "",
+                running: bool = False, message: str = "",
+                enabled: bool = True) -> str:
+    relevant_cves = {c.upper() for c in (relevant_cves or set())}
+    shown = [it for it in items
+             if not source_filter or it.source == source_filter]
+
+    def is_relevant(it: NewsItem) -> bool:
+        return bool(relevant_cves and any(c.upper() in relevant_cves
+                                          for c in it.cve_ids))
+
+    relevant = [it for it in shown if is_relevant(it)]
+    rel_html = ""
+    if relevant:
+        rel_html = ('<h2>Relevant to this host</h2>'
+                    + "".join(_news_card(it, relevant=True) for it in relevant)
+                    + '<h2>All advisories</h2>')
+    sources = sorted({it.source for it in items})
+    chips = " ".join(
+        f'<a class="chip{" on" if source_filter == s else ""}" '
+        f'href="/news?source={html.escape(s)}">{html.escape(s)}</a>'
+        for s in sources)
+    all_chip = f'<a class="chip{" on" if not source_filter else ""}" href="/news">all</a>'
+    body = "".join(_news_card(it) for it in shown) or \
+        "<p>No advisories cached yet. Click Refresh to fetch the latest.</p>"
+    refresh = '<meta http-equiv="refresh" content="5">' if running else ""
+    btn = ('<button class="scanbtn" disabled>Refreshing…</button>' if running
+           else '<button class="scanbtn">Refresh</button>')
+    flash = (f'<div class="flash">{html.escape(message)}</div>'
+             if message and not running else "")
+    if not enabled:
+        body = ('<p>The advisories feed is disabled '
+                '(<code>news_enabled: false</code>). Enable it in the config to '
+                'fetch vulnerability news.</p>')
+        rel_html = chips = all_chip = btn = ""
+    when = html.escape(fetched_at) if fetched_at else "never"
+    return f"""<!doctype html><html><head><meta charset=utf-8>{refresh}
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>vulnscan-ai — advisories</title><style>{_STYLE}</style></head>
+<body>
+<header><div class="wrap">{logo_svg(22)} <b>vulnscan&middot;ai</b>
+  <span class=meta style="color:#9fb0c8">advisories &middot; updated {when}</span>
+  <span class=spacer></span>{_news_nav("news")}
+  &nbsp;<a href="/logout">Sign out</a></div></header>
+<div class="wrap">
+  {flash}
+  <div style="display:flex;align-items:center;gap:1rem;margin:.5rem 0">
+    <form class="inline" method=post action="/news/refresh">{btn}</form>
+    <span class=meta>{all_chip} {chips}</span>
+  </div>
+  {rel_html}
+  {body}
 </div>{_BUSY_OVERLAY}</body></html>"""
 
 
@@ -565,6 +661,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._redirect("/login")
         if path == "/api/findings.json":
             return self._serve_findings_json()
+        if path == "/api/news.json":
+            return self._serve_news_json()
+        if path == "/news":
+            return self._serve_news()
         if path == "/":
             return self._serve_dashboard()
         return self._text(HTTPStatusNotFound, "Not found")
@@ -583,6 +683,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._do_allow(add=False)
         if path == "/scan":
             return self._do_scan()
+        if path == "/news/refresh":
+            return self._do_news_refresh()
         if path == "/fix":
             return self._do_fix()
         return self._text(HTTPStatusNotFound, "Not found")
@@ -639,6 +741,65 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.server.allow = allow  # type: ignore[attr-defined]
         cfg.write_user_config({"dashboard_allow": allow})
         return self._redirect("/")
+
+    # -- advisories / news ---------------------------------------------------
+    def _news_enabled(self) -> bool:
+        return bool(getattr(self._cfg(), "news_enabled", True))
+
+    def _maybe_refresh_news(self, srv) -> None:
+        """Kick off a background refresh if the cache is empty or stale."""
+        if srv.news_running or not self._news_enabled():
+            return
+        ttl_h = int(getattr(self._cfg(), "news_refresh_hours", 12) or 12)
+        stale = True
+        if srv.news_fetched_at:
+            try:
+                age = time.time() - time.mktime(time.strptime(
+                    srv.news_fetched_at, "%Y-%m-%d %H:%M UTC"))
+                stale = age > ttl_h * 3600
+            except ValueError:
+                stale = True
+        if stale or not srv.news_items:
+            with srv.news_lock:
+                if srv.news_running:
+                    return
+                srv.news_running = True
+            threading.Thread(target=_run_news, args=(srv,), daemon=True).start()
+
+    def _serve_news(self):
+        srv = self.server  # type: ignore[attr-defined]
+        self._maybe_refresh_news(srv)
+        source = parse_qs(self.path.split("?", 1)[1])["source"][0] \
+            if "?" in self.path and "source=" in self.path else ""
+        findings, _ = self._load_findings()
+        relevant = {c.upper() for f in findings for c in (f.cve_ids or [])}
+        self._html(200, render_news(
+            srv.news_items, srv.news_fetched_at, socket.gethostname(),
+            relevant_cves=relevant, source_filter=source,
+            running=srv.news_running, message=srv.news_message,
+            enabled=self._news_enabled()))
+
+    def _serve_news_json(self):
+        srv = self.server  # type: ignore[attr-defined]
+        raw = json.dumps([i.to_dict() for i in srv.news_items],
+                         indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _do_news_refresh(self):
+        srv = self.server  # type: ignore[attr-defined]
+        if not self._news_enabled():
+            return self._redirect("/news")
+        with srv.news_lock:
+            if srv.news_running:
+                return self._redirect("/news")
+            srv.news_running = True
+            srv.news_message = ""
+        threading.Thread(target=_run_news, args=(srv,), daemon=True).start()
+        return self._redirect("/news")
 
     # -- scan / fix actions --------------------------------------------------
     def _do_scan(self):
@@ -726,6 +887,20 @@ def _run_scan(srv) -> None:
         srv.scan_running = False
 
 
+def _run_news(srv) -> None:
+    """Background refresh of the advisories feed cache."""
+    cfg = srv.cfg
+    try:
+        items, fetched_at = feeds.refresh_news(
+            cfg, getattr(cfg, "news_sources", None))
+        srv.news_items, srv.news_fetched_at = items, fetched_at
+        srv.news_message = f"Advisories updated: {len(items)} item(s)."
+    except Exception as exc:  # noqa: BLE001
+        srv.news_message = f"Refresh failed: {exc}"
+    finally:
+        srv.news_running = False
+
+
 class DashboardServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
@@ -737,6 +912,12 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         self.scan_running = False
         self.scan_message = ""
         self.scan_lock = threading.Lock()
+        # Advisories/news tab: serve from the on-disk cache; refresh in the
+        # background so a slow/blocked feed never stalls a page load.
+        self.news_running = False
+        self.news_message = ""
+        self.news_lock = threading.Lock()
+        self.news_items, self.news_fetched_at = feeds.load_cache(cfg)
 
 
 def serve(cfg, *, port: Optional[int] = None,
@@ -751,8 +932,10 @@ def serve(cfg, *, port: Optional[int] = None,
               f"(ERR_UNSAFE_PORT). Use a safe port, e.g. --port 65101.")
     allow = [e for e in (cfg.dashboard_allow or []) if valid_allow_entry(e)]
     # Localhost-only unless explicit bind or an allow-list opens it to the network.
+    # 0.0.0.0 is reached ONLY when an explicit allow-list exists; client_allowed()
+    # then rejects every source IP that is not loopback or allow-listed.
     if bind is None:
-        bind = "0.0.0.0" if allow else cfg.dashboard_bind
+        bind = "0.0.0.0" if allow else cfg.dashboard_bind  # nosec B104
     host = socket.gethostname()
     cert = cfg.dashboard_cert or os.path.join(cfg.state_dir, "dashboard-cert.pem")
     key = cfg.dashboard_key or os.path.join(cfg.state_dir, "dashboard-key.pem")

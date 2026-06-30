@@ -28,6 +28,8 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
 | Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container` |
+| Prioritisation | **CISA KEV** (actively exploited) + **EPSS** exploit-probability on every finding |
+| Advisories | `news` command + dashboard tab: CISA KEV, NVD, distro errata (cached, offline-friendly) |
 | Fix mode | **Suggest + approve** by default (safest for prod/FIPS) |
 | AI backend | **Claude** default; pluggable adapters for the rest |
 
@@ -257,6 +259,28 @@ The scanners are built to avoid noise:
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or
   title (globs allowed); the scan reports how many it suppressed.
+
+### Exploitation-aware prioritisation
+
+Cutting noise is half the job; the other half is surfacing what attackers are
+*actually using*. During enrichment each CVE is checked against two public feeds:
+
+- **CISA KEV** — the Known Exploited Vulnerabilities catalog. A match means the
+  flaw is being exploited in the wild: the finding is tagged `[KEV]`, sorted to
+  the top, and raised to at least `important` so it can't sit below your severity
+  floor.
+- **EPSS** — FIRST.org's exploit-probability score; a high value shows as
+  `[EPSS xx%]`.
+
+The same feeds power the **`news`** command and the dashboard **Advisories** tab
+(CISA KEV, NVD, and your distribution's errata), cached locally so they work
+offline. Disable the enrichment with `"exploit_enrich": false`; turn the news
+tab off with `"news_enabled": false`.
+
+```bash
+# Recent advisories, actively-exploited first; [on-host] = matches your last scan
+vulnscan-ai news --refresh
+```
 
 PDF output always produces a real PDF: it uses `reportlab` if installed,
 otherwise a built-in dependency-free PDF writer. Use a `.html` extension to

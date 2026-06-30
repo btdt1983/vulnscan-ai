@@ -25,6 +25,25 @@ vulnscan-ai keeps a single current release in the signed repository. Security
 fixes are shipped in the **latest release** only; please upgrade before
 reporting (`sudo dnf upgrade vulnscan-ai`).
 
+## Security posture
+
+vulnscan-ai is **stdlib-only** (no third-party runtime dependencies, so no
+dependency-CVE surface) and ships several deliberate guardrails:
+
+- **SAST in CI** — every push runs `bandit` and fails on any medium-or-higher
+  finding; the handful of reviewed exceptions carry an inline `# nosec` with a
+  justification.
+- **Remediation safety** — AI-proposed fixes are screened against a command
+  deny-list and applied transactionally (backup → validate → reload →
+  auto-rollback). Package-CVE fixes cannot carry config/service scaffolding.
+- **Network** — all HTTP goes through one helper over a FIPS-hardened, verified
+  TLS context; only `http`/`https` schemes are allowed (no `file://`), feed URLs
+  are fixed constants (no SSRF), and responses are size-capped.
+- **Feeds/dashboard** — advisory feed content is untrusted and HTML-escaped on
+  output (no XSS); remote XML is parsed with a DOCTYPE/ENTITY guard (no XXE /
+  entity-expansion). The dashboard requires login, binds to localhost unless an
+  allow-list is set, and uses `SameSite=Strict` session cookies.
+
 ## Verifying downloads
 
 Packages and repository metadata are GPG-signed by

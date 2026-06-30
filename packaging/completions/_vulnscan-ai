@@ -15,6 +15,7 @@ _vulnscan-ai() {
     'update-oval:download the OpenSCAP OVAL feed'
     'scheduled:non-interactive scan + dated report'
     'dashboard:serve saved findings over an HTTPS login dashboard'
+    'news:show recent vulnerability advisories (CISA KEV, NVD, errata)'
   )
   sev=(low moderate important critical)
   scanners=(dnf oscap ssh systemd ports webroot container)
@@ -86,6 +87,11 @@ _vulnscan-ai() {
             '--list[show dashboard settings, then exit]' \
             '--port[listen port]:port:' \
             '--bind[bind address]:address:' ;;
+        news)
+          _arguments \
+            '--source[only one feed source]:source:(kev nvd distro)' \
+            '--refresh[fetch fresh data instead of the cache]' \
+            '--limit[max advisories to show]:n:' ;;
         *) _message 'no more arguments' ;;
       esac ;;
   esac

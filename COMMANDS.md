@@ -22,6 +22,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 | [`update-oval`](#update-oval) | Download the OpenSCAP OVAL feed for this distro |
 | [`scheduled`](#scheduled) | Non-interactive scan + dated report (systemd timer/cron) |
 | [`dashboard`](#dashboard) | Serve saved findings over an HTTPS login dashboard |
+| [`news`](#news) | Show recent vulnerability advisories (CISA KEV, NVD, distro errata) |
 
 ---
 
@@ -119,6 +120,14 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > mounts downgraded a step, `--privileged` reported once. These are runtime
 > findings, so the AI's fix is to **recreate the container** without the flag (no
 > service to reload) — review before acting.
+
+> **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
+> CVE is checked against the **CISA KEV** catalog (actively exploited in the
+> wild) and the **EPSS** exploit-probability score. KEV findings are tagged
+> `[KEV]`, sorted to the top, and raised to at least `important` so they can't
+> hide below the severity floor; a high probability shows as `[EPSS xx%]`. This
+> reuses the advisory feeds (see [`news`](#news)); disable with
+> `"exploit_enrich": false` or `--no-enrich`.
 | `--min-severity SEV` | Only keep findings at/above this severity. |
 | `--no-enrich` | Skip Red Hat/NVD CVE-feed lookups (faster; fully offline). |
 | `--pdf PATH` | Also write a PDF report. |
@@ -432,10 +441,44 @@ execution). **Apply fix** runs the fix transactionally on the host and is **off
 by default** — set `"dashboard_allow_fix": true` in the config to make the Apply
 button appear (login + allow-list still apply). `--list` shows this state.
 
+**Advisories tab.** A second tab shows recent vulnerability [news](#news) (CISA
+KEV, NVD, distro errata), refreshed in the background and cached so it works
+offline. Advisories whose CVE matches your last scan are flagged **on this host**.
+
 ```bash
 sudo vulnscan-ai dashboard --set-password
 ssh -L 65101:localhost:65101 host    # then browse https://localhost:65101/
 ```
+
+---
+
+## `news`
+
+Show recent vulnerability advisories aggregated from public feeds. The same
+feeds also enrich `scan` findings (see the exploitation-intel note under
+[`scan`](#scan)).
+
+```
+vulnscan-ai news [--source kev|nvd|distro] [--refresh] [--limit N]
+```
+
+| Option | Description |
+|---|---|
+| `--source NAME` | Show only one feed: `kev` (CISA Known Exploited), `nvd` (recent NVD CVEs), or `distro` (the host distribution's errata). |
+| `--refresh` | Fetch fresh data instead of the on-disk cache. |
+| `--limit N` | Maximum advisories to show (default 30). |
+
+Sources (all stdlib HTTP over FIPS-hardened TLS; URLs are fixed, never
+user-supplied):
+
+- **CISA KEV** — Known Exploited Vulnerabilities (actively exploited in the wild).
+- **NVD** — recently published CVEs (NIST NVD API 2.0).
+- **distro errata** — the host distribution's own advisories (AlmaLinux today).
+
+Advisories are cached under `<state-dir>/news-cache.json` so the command (and the
+dashboard tab) work offline. Items whose CVE matches the last scan are tagged
+`[on-host]`; actively-exploited ones carry `[KEV]` and a high `[EPSS xx%]` score.
+Configure with `news_enabled`, `news_sources`, `news_refresh_hours`.
 
 ---
 

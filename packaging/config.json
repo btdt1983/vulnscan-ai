@@ -6,6 +6,10 @@
   "reports_dir": "/var/lib/vulnscan-ai/reports",
   "min_severity": "low",
   "enrich": true,
+  "exploit_enrich": true,
+  "news_enabled": true,
+  "news_sources": ["kev", "nvd", "distro"],
+  "news_refresh_hours": 12,
   "auto_approve": false,
   "dry_run": false,
   "timeout": 30

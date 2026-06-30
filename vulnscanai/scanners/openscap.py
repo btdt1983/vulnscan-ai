@@ -48,7 +48,9 @@ def parse_oval_definitions(oval_path: str) -> Dict[str, dict]:
     """
     out: Dict[str, dict] = {}
     try:
-        context = ET.iterparse(oval_path, events=("end",))
+        # OVAL feed downloaded from the distro's official source over TLS;
+        # ElementTree resolves no external entities/DTDs (no XXE file read).
+        context = ET.iterparse(oval_path, events=("end",))  # nosec B314
     except (OSError, ET.ParseError):
         return out
     try:
@@ -119,7 +121,8 @@ class OpenScapScanner(Scanner):
         defs = parse_oval_definitions(oval_path)
         findings: List[Finding] = []
         try:
-            tree = ET.parse(results_path)
+            # Results file produced locally by `oscap` from our own scan run.
+            tree = ET.parse(results_path)  # nosec B314
         except ET.ParseError:
             return findings
         ns = "{http://oval.mitre.org/XMLSchema/oval-results-5}"

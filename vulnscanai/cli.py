@@ -19,13 +19,14 @@ from .config import Config
 from .fips import status_line
 from .branding import print_banner
 from .models import (
-    Finding, apply_ignores, apply_service_states, apply_vendor_states,
-    dedup_cross_scanner, diff_findings, findings_from_json, findings_to_json,
-    merge_findings, severity_rank,
+    Finding, apply_exploit_priority, apply_ignores, apply_service_states,
+    apply_vendor_states, dedup_cross_scanner, diff_findings, findings_from_json,
+    findings_to_json, merge_findings, severity_rank,
 )
 from .report import write_report
 from .scanners import (
-    SCANNERS, NvdEnricher, ServiceStateEnricher, detect_distro, download_oval,
+    SCANNERS, ExploitEnricher, NvdEnricher, ServiceStateEnricher, detect_distro,
+    download_oval,
 )
 
 
@@ -84,7 +85,9 @@ def _print_findings(findings: List[Finding]) -> None:
     if not findings:
         print("No vulnerabilities found.")
         return
-    findings = sorted(findings, key=lambda f: (-severity_rank(f.severity),
+    # Actively-exploited (CISA KEV) findings float to the very top.
+    findings = sorted(findings, key=lambda f: (-int(f.exploited),
+                                               -severity_rank(f.severity),
                                                -(f.cvss_score or 0)))
     color = _use_color()
     print(f"{'SEV':<5} {'CVSS':<5} {'PACKAGE / ISSUE':<45} {'ADVISORY':<14} CVEs")
@@ -100,7 +103,13 @@ def _print_findings(findings: List[Finding]) -> None:
         subject = (f.package or f.title or "-")[:44]
         adv = (f.advisory or "-")[:13]
         cves = ", ".join(f.cve_ids[:3]) + ("…" if len(f.cve_ids) > 3 else "")
-        print(f"{cell} {cvss:<5} {subject:<45} {adv:<14} {cves}")
+        flags = ""
+        if f.exploited:
+            tag = "[KEV]"
+            flags += " " + ((_SEV_ANSI["critical"] + tag + _RESET) if color else tag)
+        if f.epss is not None and f.epss >= 0.5:
+            flags += f" [EPSS {f.epss:.0%}]"
+        print(f"{cell} {cvss:<5} {subject:<45} {adv:<14} {cves}{flags}")
     print("-" * 90)
     summary = _severity_summary(findings, color)
     print(f"{len(findings)} finding(s)" + (f":   {summary}" if summary else "."))
@@ -170,6 +179,18 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
             if downgraded:
                 _eprint(f"  - {downgraded} finding(s) downgraded "
                         f"(service inactive/disabled)")
+    # Exploitation intel: flag CISA-KEV (actively exploited) findings + EPSS.
+    # Runs last so an exploited CVE outranks a dormant-service downgrade.
+    if enrich and cfg.exploit_enrich and findings:
+        ex = ExploitEnricher(cfg)
+        if ex.available():
+            _eprint("  > checking exploitation intel (CISA KEV, EPSS)...")
+            ex.enrich(findings)
+            findings, raised = apply_exploit_priority(findings)
+            kev = sum(1 for f in findings if f.exploited)
+            if kev:
+                _eprint(f"  ! {kev} finding(s) actively exploited (CISA KEV)"
+                        f"{f'; {raised} raised to important' if raised else ''}")
     return findings
 
 
@@ -347,7 +368,8 @@ def cmd_fix(cfg: Config, args) -> int:
         if args.export_script:
             with open(args.export_script, "w", encoding="utf-8") as fh:
                 fh.write(export_fix.to_bash_script(findings))
-            os.chmod(args.export_script, 0o755)
+            # The user explicitly asked for a runnable fix script; 0755 is the point.
+            os.chmod(args.export_script, 0o755)  # nosec B103
             print(f"Wrote bash script: {args.export_script}")
         if args.export_ansible:
             with open(args.export_ansible, "w", encoding="utf-8") as fh:
@@ -599,6 +621,49 @@ def cmd_providers(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_news(cfg: Config, args) -> int:
+    """Show recent vulnerability advisories (CISA KEV, NVD, distro errata)."""
+    from . import feeds
+    sources = [args.source] if args.source else cfg.news_sources
+    if args.refresh:
+        print("Fetching latest advisories ...")
+        items, fetched_at = feeds.refresh_news(cfg, sources, limit_per=args.limit)
+    else:
+        items, fetched_at = feeds.load_cache(cfg)
+        if not items:
+            print("No cached advisories; fetching ...")
+            items, fetched_at = feeds.refresh_news(cfg, sources, limit_per=args.limit)
+    if args.source:
+        items = [i for i in items if i.source == args.source]
+    # Cross-reference the last scan so locally-relevant advisories stand out.
+    relevant = set()
+    try:
+        with open(cfg.findings_path, encoding="utf-8") as fh:
+            relevant = {c.upper() for f in findings_from_json(fh.read())
+                        for c in (f.cve_ids or [])}
+    except OSError:
+        pass
+    color = _use_color()
+    print(f"Advisories (updated {fetched_at or 'never'}):\n")
+    for it in items[:args.limit]:
+        sev = (it.severity or "unknown").lower()
+        tag = f"{_SEV_TAG.get(sev, 'UNK'):<5}"
+        if color:
+            tag = _SEV_ANSI.get(sev, "") + tag + _RESET
+        flags = ""
+        if it.exploited:
+            kev = "[KEV]"
+            flags += " " + ((_SEV_ANSI["critical"] + kev + _RESET) if color else kev)
+        if it.epss is not None and it.epss >= 0.5:
+            flags += f" [EPSS {it.epss:.0%}]"
+        if relevant and any(c.upper() in relevant for c in it.cve_ids):
+            flags += " [on-host]"
+        date = (it.published or "")[:10]
+        print(f"{tag} {date:<10} {it.title[:70]}{flags}")
+    print(f"\n{len(items)} advisory(ies) from: {', '.join(sorted({i.source for i in items})) or '-'}")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # argument parsing
 # --------------------------------------------------------------------------- #
@@ -680,6 +745,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("providers", help="list AI providers")
     sp.set_defaults(func=cmd_providers)
+
+    sp = sub.add_parser(
+        "news", help="show recent vulnerability advisories (CISA KEV, NVD, errata)")
+    sp.add_argument("--source", choices=["kev", "nvd", "distro"],
+                    help="only show one feed source")
+    sp.add_argument("--refresh", action="store_true",
+                    help="fetch fresh data instead of using the cache")
+    sp.add_argument("--limit", type=int, default=30,
+                    help="max advisories to show (default 30)")
+    sp.set_defaults(func=cmd_news)
 
     sp = sub.add_parser(
         "setup", help="interactive first-run wizard: pick an offline AI model")

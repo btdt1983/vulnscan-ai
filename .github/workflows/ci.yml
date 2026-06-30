@@ -26,6 +26,23 @@ jobs:
           python3 -m vulnscanai providers
 
   # ---------------------------------------------------------------- #
+  # Static security analysis (bandit). Dev/CI only — bandit is never a
+  # runtime dependency; the package itself stays stdlib-only. Fails the
+  # build on any MEDIUM+ finding; reviewed exceptions carry a # nosec.
+  # ---------------------------------------------------------------- #
+  bandit:
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bandit
+        run: |
+          dnf -y install python3 python3-pip
+          python3 -m pip install --quiet bandit
+      - name: Run bandit (medium+ severity)
+        run: bandit -r vulnscanai -ll
+
+  # ---------------------------------------------------------------- #
   # Build the binary RPM with rpmbuild, install it (resolving deps
   # from the real repos, incl. openscap-scanner), and smoke test.
   # ---------------------------------------------------------------- #

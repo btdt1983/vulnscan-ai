@@ -9,6 +9,7 @@ from typing import Dict, Type
 from .base import Scanner
 from .container import ContainerScanner
 from .dnf_rhsa import DnfRhsaScanner
+from .exploit import ExploitEnricher
 from .nvd import NvdEnricher
 from .openscap import OpenScapScanner
 from .oval import detect_distro, download_oval
@@ -32,6 +33,6 @@ SCANNERS: Dict[str, Type[Scanner]] = {
 __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
     "SystemdSecurityScanner", "PortScanner", "WebrootScanner",
-    "ContainerScanner", "NvdEnricher",
+    "ContainerScanner", "NvdEnricher", "ExploitEnricher",
     "ServiceStateEnricher", "SCANNERS", "download_oval", "detect_distro",
 ]

@@ -38,6 +38,11 @@ class Config:
     enrich: bool = True                      # query CVE web feeds for detail
     vendor_state_filter: bool = True         # drop Red Hat "not affected" CVEs
     service_state_filter: bool = True        # downgrade dormant-daemon findings
+    exploit_enrich: bool = True              # KEV/EPSS exploitation intel (network)
+    # Dashboard "Advisories" news tab (vulnscanai/feeds.py).
+    news_enabled: bool = True                # show the news tab + allow refresh
+    news_sources: List[str] = field(default_factory=lambda: ["kev", "nvd", "distro"])
+    news_refresh_hours: int = 12             # cache TTL before a background refresh
     redhat_api: str = "https://access.redhat.com/hydra/rest/securitydata"
     nvd_api: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     nvd_api_key: Optional[str] = None

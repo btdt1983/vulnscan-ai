@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.1.26
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,22 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.0-1
+- STABLE release. Exploitation-aware prioritisation: every finding's CVE is
+  checked against the CISA KEV catalog (actively exploited in the wild) and the
+  FIRST.org EPSS score during enrichment. KEV findings are tagged [KEV], sorted
+  to the top and raised to at least 'important'; high EPSS shows as [EPSS xx%].
+  Toggle with 'exploit_enrich'.
+- New 'news' command + dashboard "Advisories" tab: recent vulnerability news from
+  CISA KEV, NIST NVD and the host distribution's errata (AlmaLinux today), cached
+  to the state dir so it works offline. Advisories matching the last scan are
+  flagged. New 'feeds' module (stdlib only, FIPS TLS); config keys news_enabled,
+  news_sources, news_refresh_hours.
+- Security hardening: HTTP restricted to http/https schemes (no file:// SSRF) with
+  a response-size cap; untrusted feed XML rejects DOCTYPE/ENTITY (no XXE); all
+  feed content HTML-escaped in the dashboard. New bandit SAST job in CI (fails on
+  medium+). Man page gains the dashboard and news sections.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.1.26-1
 - BUGFIX (regression in 0.1.25): 'fix' crashed with "TypeError: 'NoneType'
   object is not iterable" when the AI returned a null list field (e.g.

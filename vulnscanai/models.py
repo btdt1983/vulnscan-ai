@@ -90,6 +90,12 @@ class Finding:
     # "no-service" (ships no service units; risk is library/CLI level), or
     # None (not assessed). Only "inactive" is acted on (severity downgrade).
     runtime_state: Optional[str] = None
+    # Exploitation intelligence (set by the exploit enricher from public feeds):
+    # `exploited` = the CVE is in the CISA KEV catalog (actively exploited in the
+    # wild); `epss` = FIRST.org EPSS exploit-probability (0.0-1.0). Both drive
+    # prioritisation; see models.apply_exploit_priority.
+    exploited: bool = False
+    epss: Optional[float] = None
     references: List[str] = field(default_factory=list)
     remediation: Optional[Remediation] = None
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -284,6 +290,38 @@ def apply_service_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
         f.description = (f.description + "\n" + note) if f.description else note
         downgraded += 1
     return findings, downgraded
+
+
+def apply_exploit_priority(findings: List[Finding]) -> Tuple[List[Finding], int]:
+    """Raise the priority of findings known to be exploited, and annotate EPSS.
+
+    A finding whose CVE is in the CISA KEV catalog (`exploited`) is actively
+    attacked in the wild — the single strongest prioritisation signal. We raise
+    such a finding to at least "important" (preserving the original in
+    raw["severity_before_exploit"]) so it can't hide below the severity floor,
+    and annotate it. A high EPSS probability is annotated too (but never lowers
+    or, by itself, raises severity — it is a likelihood, not a confirmed fact).
+
+    Runs AFTER the vendor/service downgrades on purpose: an exploited CVE matters
+    even if the local daemon is currently dormant. Returns (findings, raised).
+    """
+    raised = 0
+    for f in findings:
+        notes = []
+        if f.exploited:
+            notes.append("[exploited] In the CISA KEV catalog — actively "
+                         "exploited in the wild; prioritise remediation.")
+            if severity_rank(f.severity) < severity_rank("important"):
+                f.raw["severity_before_exploit"] = f.severity
+                f.severity = "important"
+                raised += 1
+        if f.epss is not None and f.epss >= 0.5:
+            notes.append(f"[epss] Exploit probability {f.epss:.0%} (FIRST.org "
+                         f"EPSS) — high likelihood of exploitation.")
+        for note in notes:
+            if note not in f.description:
+                f.description = (f.description + "\n" + note) if f.description else note
+    return findings, raised
 
 
 def diff_findings(old: List[Finding],
