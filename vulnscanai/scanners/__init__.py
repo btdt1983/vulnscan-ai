@@ -12,7 +12,7 @@ from .dnf_rhsa import DnfRhsaScanner
 from .exploit import ExploitEnricher
 from .nvd import NvdEnricher
 from .openscap import OpenScapScanner
-from .oval import detect_distro, download_oval
+from .oval import detect_distro, download_oval, is_oval_stale, oval_age_days
 from .ports import PortScanner
 from .runtime_state import ServiceStateEnricher
 from .ssh_config import SshConfigScanner
@@ -35,4 +35,5 @@ __all__ = [
     "SystemdSecurityScanner", "PortScanner", "WebrootScanner",
     "ContainerScanner", "NvdEnricher", "ExploitEnricher",
     "ServiceStateEnricher", "SCANNERS", "download_oval", "detect_distro",
+    "is_oval_stale", "oval_age_days",
 ]

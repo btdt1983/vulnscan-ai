@@ -26,7 +26,7 @@ from .models import (
 from .report import write_report
 from .scanners import (
     SCANNERS, ExploitEnricher, NvdEnricher, ServiceStateEnricher, detect_distro,
-    download_oval,
+    download_oval, is_oval_stale, oval_age_days,
 )
 
 
@@ -131,9 +131,37 @@ def _select_scanners(args, cfg: Config) -> List[str]:
 # --------------------------------------------------------------------------- #
 # scanning
 # --------------------------------------------------------------------------- #
+def _maybe_refresh_oval(cfg: Config) -> None:
+    """Auto-refresh the OVAL feed before an oscap scan when it is stale.
+
+    TTL-gated (oval_max_age_days) so it isn't a per-scan download, network-backed
+    and fully fail-soft: if the refresh fails, the existing feed (if any) is used
+    and the scan continues. Skipped entirely on air-gapped hosts via the
+    oval_auto_update toggle or --no-enrich.
+    """
+    from .scanners.base import have
+    if not have("oscap"):
+        return                       # nothing will consume the feed
+    max_age = int(getattr(cfg, "oval_max_age_days", 7) or 7)
+    if not is_oval_stale(cfg, max_age):
+        return
+    age = oval_age_days(cfg)
+    why = "not staged yet" if age is None else f"{age:.0f} days old (> {max_age})"
+    _eprint(f"  > OVAL feed {why}; auto-refreshing (this can be tens of MB)...")
+    try:
+        download_oval(cfg, timeout=max(cfg.timeout, 180))
+    except Exception as exc:  # noqa: BLE001
+        _eprint(f"  - OVAL auto-update failed ({exc}); using the existing feed "
+                f"if present (run 'vulnscan-ai update-oval' to stage one)")
+
+
 def do_scan(cfg: Config, scanners: List[str], enrich: bool,
             extra_ignores: Optional[List[str]] = None) -> List[Finding]:
     findings: List[Finding] = []
+    # Keep the oscap OVAL feed current automatically (TTL-gated, fail-soft).
+    if ("oscap" in scanners and enrich
+            and getattr(cfg, "oval_auto_update", True)):
+        _maybe_refresh_oval(cfg)
     for name in scanners:
         if name == NvdEnricher.name:
             # 'nvd' is an enrichment source, not a detection scanner; it runs

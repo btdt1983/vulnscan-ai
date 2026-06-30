@@ -118,7 +118,10 @@ default provider/model. Offered automatically on the first interactive run;
 suppress with \fBVULNSCANAI_NO_SETUP=1\fR. No options.
 .SS update\-oval
 Detect the distribution and download/stage the OpenSCAP OVAL CVE feed under
-\fI<state-dir>/oval/\fR, enabling the \fBoscap\fR scanner. No options.
+\fI<state-dir>/oval/\fR, enabling the \fBoscap\fR scanner. No options. You rarely
+need this by hand: a scan that uses \fBoscap\fR auto-refreshes the feed when it is
+missing or older than \fBoval_max_age_days\fR (default 7), unless offline
+(\fB\-\-no\-enrich\fR) or \fBoval_auto_update\fR is false.
 .SS scheduled
 Non-interactive scan and dated report for the systemd timer or cron. Never
 applies fixes. Rotates old reports and can signal severity via the exit code.

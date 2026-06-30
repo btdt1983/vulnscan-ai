@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 import unittest
 
 from vulnscanai import export, export_fix, report
@@ -1594,6 +1595,29 @@ class TestFeedsParsers(unittest.TestCase):
             self.assertEqual(got[0].epss, 0.9)
             self.assertEqual(oct(os.stat(feeds._cache_path(cfg)).st_mode & 0o777),
                              "0o600")
+
+
+class TestOvalAutoUpdate(unittest.TestCase):
+    def test_stale_when_missing_then_fresh_then_old(self):
+        from vulnscanai.scanners.oval import (
+            is_oval_stale, oval_age_days, staged_oval_path)
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Config(state_dir=tmp)
+            # Not staged -> stale, age None.
+            self.assertIsNone(oval_age_days(cfg))
+            self.assertTrue(is_oval_stale(cfg, 7))
+            # Stage a fresh feed.
+            path = staged_oval_path(cfg)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write("<oval/>")
+            self.assertFalse(is_oval_stale(cfg, 7))
+            self.assertLess(oval_age_days(cfg), 1)
+            # Backdate it 10 days -> stale again.
+            old = time.time() - 10 * 86400
+            os.utime(path, (old, old))
+            self.assertTrue(is_oval_stale(cfg, 7))
+            self.assertFalse(is_oval_stale(cfg, 30))   # within a 30-day window
 
 
 class TestExploitEnrichment(unittest.TestCase):

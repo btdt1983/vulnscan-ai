@@ -365,6 +365,14 @@ vulnscan-ai scan --scanner dnf --scanner oscap   # then scan with it
 ```
 No options.
 
+> **Auto-refresh.** You normally don't need to run this by hand: when a scan uses
+> the `oscap` scanner and the staged feed is missing or older than
+> `oval_max_age_days` (default **7**), it is downloaded automatically before the
+> scan. This is TTL-gated (not a per-scan download), fail-soft (a failed refresh
+> falls back to the existing feed), and skipped when offline (`--no-enrich`) or
+> when `oval_auto_update` is `false` — set that on air-gapped hosts and stage the
+> feed manually with this command.
+
 ---
 
 ## `scheduled`

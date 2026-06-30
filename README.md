@@ -188,7 +188,8 @@ vulnscan-ai fix --yes
 # Re-render a report from the last scan
 vulnscan-ai report -o latest.pdf
 
-# Stage the OpenSCAP OVAL feed for this distro, then scan with it
+# Scan with OpenSCAP/OVAL — the feed auto-refreshes when stale (>7 days);
+# update-oval just pre-stages it (handy for air-gapped hosts)
 vulnscan-ai update-oval
 vulnscan-ai scan --scanner dnf --scanner oscap --pdf report.pdf
 

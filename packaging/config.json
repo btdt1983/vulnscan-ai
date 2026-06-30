@@ -7,6 +7,8 @@
   "min_severity": "low",
   "enrich": true,
   "exploit_enrich": true,
+  "oval_auto_update": true,
+  "oval_max_age_days": 7,
   "news_enabled": true,
   "news_sources": ["kev", "nvd", "distro"],
   "news_refresh_hours": 12,

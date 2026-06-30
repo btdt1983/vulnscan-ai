@@ -14,6 +14,7 @@ from __future__ import annotations
 import bz2
 import gzip
 import os
+import time
 from typing import List, Optional, Tuple
 
 from .. import http
@@ -115,3 +116,23 @@ def download_oval(config, timeout: int = 180) -> Optional[str]:
     raise RuntimeError(
         "could not download an OVAL feed:\n  " + "\n  ".join(errors)
     )
+
+
+def staged_oval_path(config) -> str:
+    """Path where `download_oval` stages this host's OVAL feed."""
+    distro_id, major = detect_distro()
+    return os.path.join(config.state_dir, "oval", f"{distro_id}-{major}.oval.xml")
+
+
+def oval_age_days(config) -> Optional[float]:
+    """Age in days of the staged OVAL feed, or None if it isn't staged."""
+    try:
+        return (time.time() - os.path.getmtime(staged_oval_path(config))) / 86400.0
+    except OSError:
+        return None
+
+
+def is_oval_stale(config, max_age_days: int) -> bool:
+    """True if the staged OVAL feed is missing or older than max_age_days."""
+    age = oval_age_days(config)
+    return age is None or age > max_age_days
