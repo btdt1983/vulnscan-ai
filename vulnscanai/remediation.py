@@ -89,6 +89,9 @@ _CONFIG_SOURCES = {"ssh", "systemd", "ports", "webroot"}
 # Recognised advisory id shapes (Red Hat / AlmaLinux / Oracle / Rocky families).
 _ADVISORY_RE = re.compile(
     r"^(?:RH[SBE]A|AL[SBE]A|ELSA|RLSA|CESA)-?\d{4}[:\-]\d+", re.I)
+# Same shape, unanchored, for pulling ids out of a command string.
+_ADVISORY_TOKEN_RE = re.compile(
+    r"(?:RH[SBE]A|AL[SBE]A|ELSA|RLSA|CESA)-?\d{4}[:\-]\d+", re.I)
 
 # "dnf/yum update" prints this when the targeted advisory/package changes
 # nothing — exit code is still 0, which would otherwise read as a real success.
@@ -210,16 +213,51 @@ def _real_command(cmd: Optional[str]) -> Optional[str]:
 
 
 def _rewrite_advisory(commands: List[str], advisory: Optional[str]) -> List[str]:
-    """Force any `--advisory=` to the finding's real advisory id.
+    """Normalise the `--advisory=` argument of any dnf/yum command.
 
-    A weak model often invents a malformed id (e.g. `ALSAA2026:28973`), which
-    `dnf` then silently matches to nothing. When the finding carries a real,
-    well-formed advisory, substitute it so the update actually applies.
+    Two failure modes from weak models are fixed:
+    * an invented/malformed id (e.g. `ALSAA2026:28973`) — replaced with the
+      finding's own well-formed advisory when it has one;
+    * several ids emitted space-separated (`--advisory=RHSA-1, RHSA-2`), which
+      `dnf` rejects ("No match for argument: RHSA-2") — collapsed into one
+      comma-joined argument so the command at least parses.
+    Garbage tokens that don't look like an advisory id are dropped.
     """
     adv = (advisory or "").strip()
-    if not adv or not _ADVISORY_RE.match(adv):
-        return commands
-    return [re.sub(r"--advisory[=\s]\S+", f"--advisory={adv}", c) for c in commands]
+    finding_adv = adv if _ADVISORY_RE.match(adv) else None
+    out: List[str] = []
+    for c in commands:
+        if "--advisory" not in c:
+            out.append(c)
+            continue
+        try:
+            toks = shlex.split(c)
+        except ValueError:
+            out.append(c)
+            continue
+        ids = ([finding_adv] if finding_adv
+               else list(dict.fromkeys(_ADVISORY_TOKEN_RE.findall(c))))
+        if not ids:
+            out.append(c)
+            continue
+        new_toks: List[str] = []
+        i = 0
+        while i < len(toks):
+            if toks[i].split("=", 1)[0] == "--advisory":
+                new_toks.append("--advisory=" + ",".join(ids))
+                i += 1
+                # Absorb the model's extra id / bare-comma tokens that followed.
+                while i < len(toks):
+                    nxt = toks[i].strip(",")
+                    if nxt == "" or _ADVISORY_TOKEN_RE.search(toks[i]):
+                        i += 1
+                    else:
+                        break
+                continue
+            new_toks.append(toks[i])
+            i += 1
+        out.append(" ".join(shlex.quote(t) for t in new_toks))
+    return out
 
 
 def propose(provider: AIProvider, finding: Finding) -> Remediation:

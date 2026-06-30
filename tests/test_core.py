@@ -1348,6 +1348,22 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertEqual(rem.commands,
                          ["dnf update -y --advisory=ALSA-2026:28973"])
 
+    def test_advisory_space_separated_collapsed(self):
+        # The real crash: 'No match for argument: RHSA-2026:46333' from a space.
+        rem = self._propose(
+            '{"summary":"x","commands":'
+            '["dnf update -y --advisory=RHSA-2026:46300, RHSA-2026:46333"]}',
+            source="dnf", title="kernel", advisory="ALSA-2026:A009")  # malformed
+        self.assertEqual(
+            rem.commands,
+            ["dnf update -y --advisory=RHSA-2026:46300,RHSA-2026:46333"])
+
+    def test_advisory_trailing_flag_preserved(self):
+        rem = self._propose(
+            '{"summary":"x","commands":["dnf update --advisory=ALSA-2026:5 -y"]}',
+            source="dnf", title="x", advisory="ALSA-2026:5")
+        self.assertEqual(rem.commands, ["dnf update --advisory=ALSA-2026:5 -y"])
+
     def test_null_list_fields_do_not_crash(self):
         # qwen2.5:0.5b returned "config_changes": null; dict.get(k, []) returns
         # None (not []) when the key is present-but-null, which crashed propose().
@@ -1595,6 +1611,76 @@ class TestFeedsParsers(unittest.TestCase):
             self.assertEqual(got[0].epss, 0.9)
             self.assertEqual(oct(os.stat(feeds._cache_path(cfg)).st_mode & 0o777),
                              "0o600")
+
+
+class TestPatchedFilter(unittest.TestCase):
+    def test_parse_check_update(self):
+        from vulnscanai.scanners.applicability import parse_check_update
+        out = ("Last metadata expiration check: 0:07 ago.\n\n"
+               "bash.x86_64        5.1.8-9.el9    baseos\n"
+               "python3.11.x86_64  3.11.5-1.el9   appstream\n\n"
+               "Obsoleting Packages\n"
+               "oldpkg.noarch      1.0-1          repo\n")
+        self.assertEqual(parse_check_update(out), {"bash", "python3.11"})
+
+    def test_filter_drops_already_patched_only(self):
+        from vulnscanai.scanners.applicability import PatchedStateEnricher
+        from vulnscanai.models import apply_patched_states
+        enr = PatchedStateEnricher(Config())
+        enr.upgradable = lambda: {"bash"}            # only bash has an update
+        findings = [
+            Finding(source="oscap", package="kernel", advisory="ALSA-2026:1",
+                    cve_ids=["CVE-1"], severity="important"),     # patched -> drop
+            Finding(source="dnf", package="bash", advisory="ALSA-2026:2",
+                    fixed_version="5.1.8-9", severity="important"),  # real -> keep
+            Finding(source="dnf", package="openssl", advisory="ALSA-2026:3",
+                    vendor_fix_state="will not fix", severity="moderate"),  # keep
+            Finding(source="ssh", package=None, title="SSH root login",
+                    severity="important")]                         # not a pkg -> keep
+        enr.enrich(findings)
+        kept, dropped = apply_patched_states(findings)
+        self.assertEqual(dropped, 1)
+        self.assertEqual({f.package or f.title for f in kept},
+                         {"bash", "openssl", "SSH root login"})
+
+    def test_filter_noop_when_check_update_unknown(self):
+        from vulnscanai.scanners.applicability import PatchedStateEnricher
+        from vulnscanai.models import apply_patched_states
+        enr = PatchedStateEnricher(Config())
+        enr.upgradable = lambda: None                # error -> drop nothing
+        f = Finding(source="dnf", package="kernel", advisory="ALSA-2026:1",
+                    severity="important")
+        enr.enrich([f])
+        self.assertFalse(f.already_patched)
+        self.assertEqual(apply_patched_states([f]), ([f], 0))
+
+
+class TestBaselineIgnoreAction(unittest.TestCase):
+    def test_ignore_persists_and_round_trips(self):
+        from vulnscanai.cli import _baseline_ignore
+        f = _finding(source="ssh", package=None, cve_ids=[], advisory=None,
+                     title="SSH permits direct root login")
+        other = _finding(source="ssh", package=None, cve_ids=[], advisory=None,
+                         title="SSH X11 forwarding enabled")
+        with tempfile.TemporaryDirectory() as home:
+            old = os.environ.get("HOME")
+            os.environ["HOME"] = home
+            try:
+                path = _baseline_ignore(f)
+                with open(path) as fh:
+                    content = fh.read()
+                mode = oct(os.stat(path).st_mode & 0o777)
+            finally:
+                if old is not None:
+                    os.environ["HOME"] = old
+                else:
+                    os.environ.pop("HOME", None)
+        self.assertIn(f.id, content)
+        self.assertIn("SSH permits direct root login", content)  # readable comment
+        self.assertEqual(mode, "0o600")
+        patterns = content.splitlines()
+        self.assertTrue(match_ignore(f, patterns))       # the ignored one matches
+        self.assertFalse(match_ignore(other, patterns))  # a different one does not
 
 
 class TestOvalAutoUpdate(unittest.TestCase):

@@ -139,7 +139,12 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > scanner only reports real *patch* advisories (inventory/compliance definitions
 > are dropped) with proper CVE ids + severity; the `ports` scanner suppresses
 > ports that firewalld blocks; and findings that the `dnf` and `oscap` scanners
-> both report (same advisory/CVE) are merged. Use a **baseline** to silence
+> both report (same advisory/CVE) are merged. **Already-patched**: a package
+> finding whose fix is in the metadata but has no installable update per
+> `dnf check-update` is dropped — this clears the common lingering-old-kernel
+> noise where the scanners list historical kernel advisories that `dnf` reports
+> as "Nothing to do" because the newest kernel is already installed (disable with
+> `"patched_filter": false`). Use a **baseline** to silence
 > accepted findings: set `"ignore": [...]` in the config, list patterns (one per
 > line) in `~/.config/vulnscan-ai/ignore`, set `VULNSCANAI_IGNORE=a,b`, or pass
 > `--ignore`. Patterns match a finding id, CVE, advisory, package, or title
@@ -225,7 +230,12 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 | `--export-ansible PATH` | Write an **Ansible playbook** of the fixes and **do not apply**. |
 | `--ignore PATTERN` | With `--scan`: suppress matching findings (glob, repeatable). |
 
-Interactive prompt per finding: `[y]es / [n]o / [a]ll / [q]uit`.
+Interactive prompt per finding: `[y]es / [n]o / [i]gnore / [a]ll / [q]uit`.
+**`[i]gnore`** accepts the finding as expected and writes it to the persistent
+baseline (`~/.config/vulnscan-ai/ignore`), so it won't be reported again — handy
+for hardening findings you've reviewed and accepted (e.g. SSH password auth on a
+LAN-only host). To accept a whole class at once instead, use a glob:
+`--ignore "SSH*"` or add `SSH*` to the baseline file.
 
 ### Fix examples
 

@@ -19,14 +19,16 @@ from .config import Config
 from .fips import status_line
 from .branding import print_banner
 from .models import (
-    Finding, apply_exploit_priority, apply_ignores, apply_service_states,
-    apply_vendor_states, dedup_cross_scanner, diff_findings, findings_from_json,
-    findings_to_json, merge_findings, severity_rank,
+    Finding, apply_exploit_priority, apply_ignores, apply_patched_states,
+    apply_service_states, apply_vendor_states, dedup_cross_scanner,
+    diff_findings, findings_from_json, findings_to_json, merge_findings,
+    severity_rank,
 )
 from .report import write_report
 from .scanners import (
-    SCANNERS, ExploitEnricher, NvdEnricher, ServiceStateEnricher, detect_distro,
-    download_oval, is_oval_stale, oval_age_days,
+    SCANNERS, ExploitEnricher, NvdEnricher, PatchedStateEnricher,
+    ServiceStateEnricher, detect_distro, download_oval, is_oval_stale,
+    oval_age_days,
 )
 
 
@@ -197,6 +199,17 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
             if dropped:
                 _eprint(f"  - {dropped} finding(s) dropped "
                         f"(Red Hat: not affected)")
+    # Already-patched: drop package findings dnf can no longer act on (a fix
+    # exists in the metadata but no installable update — the common lingering-
+    # old-kernel case). Local dnf query; runs regardless of network enrichment.
+    if getattr(cfg, "patched_filter", True) and findings:
+        enricher = PatchedStateEnricher(cfg)
+        if enricher.available():
+            enricher.enrich(findings)
+            findings, patched = apply_patched_states(findings)
+            if patched:
+                _eprint(f"  - {patched} finding(s) dropped "
+                        f"(already patched — no installable update)")
     # Runtime exposure: downgrade findings whose daemon is stopped and disabled.
     # Local-only (rpm + systemctl), so it runs regardless of network enrichment.
     if cfg.service_state_filter and findings:
@@ -347,10 +360,30 @@ def _approve(finding: Finding, auto: bool) -> str:
     if auto:
         return "yes"
     try:
-        ans = input("Apply this fix? [y]es / [n]o / [a]ll / [q]uit: ").strip().lower()
+        ans = input("Apply this fix? [y]es / [n]o / [i]gnore / [a]ll / [q]uit: "
+                    ).strip().lower()
     except (EOFError, KeyboardInterrupt):
         return "quit"
-    return {"y": "yes", "a": "all", "q": "quit"}.get(ans, "no")
+    return {"y": "yes", "a": "all", "q": "quit", "i": "ignore"}.get(ans, "no")
+
+
+def _baseline_ignore(finding: Finding) -> str:
+    """Persist a finding to the baseline so future scans suppress it.
+
+    Appends a readable comment plus the finding's stable id to
+    ~/.config/vulnscan-ai/ignore (the file Config.load reads). Returns its path.
+    """
+    path = os.path.expanduser("~/.config/vulnscan-ai/ignore")
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    title = (finding.title or finding.id).replace("\n", " ")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f"# {title}  (ignored {stamp})\n{finding.id}\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
 
 
 def _print_step(r: dict) -> None:
@@ -411,6 +444,7 @@ def cmd_fix(cfg: Config, args) -> int:
     applied = 0
     rolled = 0
     approve_all = auto
+    ignored_ids: set = set()
     for f in findings:
         decision = "all" if approve_all else _approve(f, auto=False)
         if decision == "quit":
@@ -419,6 +453,11 @@ def cmd_fix(cfg: Config, args) -> int:
         if decision == "all":
             approve_all = True
             decision = "yes"
+        if decision == "ignore":
+            path = _baseline_ignore(f)
+            ignored_ids.add(f.id)
+            print(f"  ignored — won't be reported again (baseline: {path})")
+            continue
         if decision != "yes":
             print("  skipped.")
             continue
@@ -430,10 +469,15 @@ def cmd_fix(cfg: Config, args) -> int:
             rolled += 1
             print("    ROLLED BACK — change reverted, service left healthy.")
 
+    # Drop just-ignored findings so the saved set (and the dashboard) reflect it
+    # immediately, not only on the next scan.
+    if ignored_ids:
+        findings = [f for f in findings if f.id not in ignored_ids]
     _save_findings(cfg, findings)
     print(f"\n{'(dry-run) ' if dry else ''}Processed; "
           f"{applied} fix(es) applied successfully"
-          f"{f', {rolled} rolled back' if rolled else ''}.")
+          f"{f', {rolled} rolled back' if rolled else ''}"
+          f"{f', {len(ignored_ids)} ignored' if ignored_ids else ''}.")
     reboot = [f for f in findings if f.remediation and f.remediation.applied
               and f.remediation.requires_reboot]
     if reboot:

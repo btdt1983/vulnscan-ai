@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.2.1
+Version:        0.2.2
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,21 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.2-1
+- STABLE. Already-patched filter: a package finding whose fix is in the repo
+  metadata but has no installable update per 'dnf check-update' is dropped — the
+  host already has it. Clears the common lingering-old-kernel noise (old kernels
+  stay installed, so the scanners keep listing historical kernel advisories that
+  dnf reports as "Nothing to do"). Won't-fix advisories are never dropped this
+  way; fail-safe (drops nothing if dnf can't be queried). Toggle: patched_filter.
+- fix: the interactive prompt gains '[i]gnore' — accept a reviewed finding and
+  add it to the persistent baseline (~/.config/vulnscan-ai/ignore) on the spot,
+  so it isn't reported again (handy for accepted hardening items on a LAN host).
+- fix: harden the '--advisory=' rewrite — collapse space/comma-separated id lists
+  into one argument and drop garbage tokens, so a model emitting
+  '--advisory=RHSA-1, RHSA-2' no longer makes dnf fail with "No match for
+  argument"; the finding's own advisory is preferred when well-formed.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.1-1
 - Distro errata feed now covers all three RHEL clones, picked automatically:
   AlmaLinux (errata RSS), Rocky Linux (RESF/Apollo advisories JSON) and Oracle

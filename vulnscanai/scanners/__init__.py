@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
+from .applicability import PatchedStateEnricher
 from .base import Scanner
 from .container import ContainerScanner
 from .dnf_rhsa import DnfRhsaScanner
@@ -34,6 +35,6 @@ __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
     "SystemdSecurityScanner", "PortScanner", "WebrootScanner",
     "ContainerScanner", "NvdEnricher", "ExploitEnricher",
-    "ServiceStateEnricher", "SCANNERS", "download_oval", "detect_distro",
-    "is_oval_stale", "oval_age_days",
+    "PatchedStateEnricher", "ServiceStateEnricher", "SCANNERS",
+    "download_oval", "detect_distro", "is_oval_stale", "oval_age_days",
 ]

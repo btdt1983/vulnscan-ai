@@ -234,6 +234,13 @@ The scanners are built to avoid noise:
   hides a real exposure.
 - Findings that **`dnf` and `oscap` both report** (same advisory/CVE) are merged
   into one.
+- **Already patched** (`dnf check-update`): a package finding whose fix is in the
+  repo metadata but has *no installable update* is dropped — the host already has
+  it. This clears the common **lingering-old-kernel** noise: old kernels stay
+  installed, so the scanners keep listing historical kernel advisories that `dnf`
+  reports as "Nothing to do" because the newest kernel is already on the system.
+  Won't-fix advisories are never dropped this way. Disable with
+  `"patched_filter": false`.
 - **Vendor fix state** (during enrichment): Red Hat publishes, per CVE and per
   product, whether each package is actually affected. Findings Red Hat marks
   **"Not affected"** for this RHEL release are dropped as confirmed false
@@ -259,7 +266,10 @@ The scanners are built to avoid noise:
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or
-  title (globs allowed); the scan reports how many it suppressed.
+  title (globs allowed); the scan reports how many it suppressed. During `fix`
+  you can also press **`i`** to accept a reviewed finding and add it to the
+  baseline on the spot — useful for hardening items you've accepted (e.g. SSH
+  password auth on a LAN-only host; `--ignore "SSH*"` accepts the whole class).
 
 ### Exploitation-aware prioritisation
 

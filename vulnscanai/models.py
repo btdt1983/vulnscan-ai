@@ -96,6 +96,10 @@ class Finding:
     # prioritisation; see models.apply_exploit_priority.
     exploited: bool = False
     epss: Optional[float] = None
+    # Set by the patched-state enricher: the affected package has no installable
+    # update (`dnf check-update`) although a fix exists, i.e. the host already
+    # has it (or a newer build supersedes it). apply_patched_states drops these.
+    already_patched: bool = False
     references: List[str] = field(default_factory=list)
     remediation: Optional[Remediation] = None
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -290,6 +294,19 @@ def apply_service_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
         f.description = (f.description + "\n" + note) if f.description else note
         downgraded += 1
     return findings, downgraded
+
+
+def apply_patched_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
+    """Drop findings whose fix is already applied (no installable update).
+
+    The patched-state enricher marks `already_patched` when a package-CVE finding
+    has a fix in the repo metadata but `dnf check-update` offers no update for it,
+    which means the host already has the fix (a very common kernel case: old
+    kernels linger installed, so the scanners still list historical advisories
+    that `dnf` can no longer act on). Returns (kept, dropped_count).
+    """
+    kept = [f for f in findings if not f.already_patched]
+    return kept, len(findings) - len(kept)
 
 
 def apply_exploit_priority(findings: List[Finding]) -> Tuple[List[Finding], int]:

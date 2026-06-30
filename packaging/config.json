@@ -7,6 +7,7 @@
   "min_severity": "low",
   "enrich": true,
   "exploit_enrich": true,
+  "patched_filter": true,
   "oval_auto_update": true,
   "oval_max_age_days": 7,
   "news_enabled": true,
