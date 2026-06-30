@@ -1522,6 +1522,56 @@ class TestFeedsParsers(unittest.TestCase):
     def test_parse_errata_rss_malformed(self):
         self.assertEqual(feeds.parse_errata_rss("not xml", "alma"), [])
 
+    def test_parse_rocky_apollo(self):
+        data = {"advisories": [
+            {"name": "RLSA-2026:30851", "synopsis": "Important: perl update",
+             "severity": "SEVERITY_IMPORTANT", "publishedAt": "2026-06-29T12:00:00Z",
+             "affectedProducts": ["Rocky Linux 9"], "topic": "update perl",
+             "cves": [{"name": "CVE-2026-42496"}]},
+            {"name": "RLSA-2026:1", "severity": "SEVERITY_LOW",
+             "publishedAt": "2026-06-01T00:00:00Z",
+             "affectedProducts": ["Rocky Linux 8"], "cves": []}]}
+        nine = feeds.parse_rocky_apollo(data, "9")
+        self.assertEqual(len(nine), 1)               # el8 one filtered out
+        it = nine[0]
+        self.assertEqual(it.source, "rocky")
+        self.assertEqual(it.severity, "important")   # SEVERITY_IMPORTANT mapped
+        self.assertEqual(it.cve_ids, ["CVE-2026-42496"])
+        self.assertTrue(it.url.endswith("RLSA-2026:30851"))
+        self.assertEqual(len(feeds.parse_rocky_apollo(data, "")), 2)  # no filter
+
+    def test_parse_oracle_oval(self):
+        ov = ('<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/'
+              'oval-definitions-5"><definitions>'
+              '<definition class="patch"><metadata>'
+              '<title>ELSA-2026-24722:  libsoup security update (MODERATE)</title>'
+              '<affected family="unix"><platform>Oracle Linux 9</platform></affected>'
+              '<reference source="elsa" ref_id="ELSA-2026-24722" '
+              'ref_url="https://linux.oracle.com/errata/ELSA-2026-24722.html"/>'
+              '<reference source="CVE" ref_id="CVE-2026-5119" ref_url="x"/>'
+              '<advisory><severity>MODERATE</severity><issued date="2026-06-29"/>'
+              '</advisory></metadata></definition>'
+              '<definition class="patch"><metadata>'
+              '<title>ELSA-2026-1: kernel (IMPORTANT)</title>'
+              '<affected family="unix"><platform>Oracle Linux 7</platform></affected>'
+              '<reference source="elsa" ref_id="ELSA-2026-1" ref_url="y"/>'
+              '<advisory><severity>IMPORTANT</severity><issued date="2026-06-01"/>'
+              '</advisory></metadata></definition>'
+              '</definitions></oval_definitions>')
+        nine = feeds.parse_oracle_oval(ov, "9")
+        self.assertEqual(len(nine), 1)               # el7 one filtered out
+        it = nine[0]
+        self.assertEqual(it.source, "oracle")
+        self.assertEqual(it.severity, "moderate")
+        self.assertEqual(it.cve_ids, ["CVE-2026-5119"])
+        self.assertTrue(it.url.endswith("ELSA-2026-24722.html"))
+        self.assertEqual(len(feeds.parse_oracle_oval(ov, "")), 2)  # no filter
+
+    def test_oracle_oval_doctype_rejected(self):
+        bomb = ('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]>'
+                '<oval_definitions><definitions></definitions></oval_definitions>')
+        self.assertEqual(feeds.parse_oracle_oval(bomb, "9"), [])
+
     def test_dedupe_prefers_exploited(self):
         nvd = feeds.NewsItem(id="nvd:CVE-1", source="nvd", title="x",
                              cve_ids=["CVE-1"])

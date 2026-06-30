@@ -633,7 +633,9 @@ def cmd_news(cfg: Config, args) -> int:
         if not items:
             print("No cached advisories; fetching ...")
             items, fetched_at = feeds.refresh_news(cfg, sources, limit_per=args.limit)
-    if args.source:
+    if args.source == "distro":
+        items = [i for i in items if i.source in feeds.DISTRO_SOURCES]
+    elif args.source:
         items = [i for i in items if i.source == args.source]
     # Cross-reference the last scan so locally-relevant advisories stand out.
     relevant = set()

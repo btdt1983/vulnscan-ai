@@ -9,8 +9,9 @@ scan-enrichment (exploited-in-the-wild + EPSS prioritisation):
   * CISA KEV  - Known Exploited Vulnerabilities (actively exploited; highest signal)
   * NVD       - recently published CVEs (NIST NVD API 2.0)
   * EPSS      - exploit-probability score per CVE (FIRST.org); enrichment lookup
-  * distro    - the host distribution's own errata (AlmaLinux today; the
-                DISTRO_ERRATA registry makes Rocky/Oracle drop-in additions)
+  * distro    - the host distribution's own errata: AlmaLinux (RSS), Rocky Linux
+                (Apollo/RESF JSON) and Oracle Linux (ELSA OVAL), picked by
+                detect_distro() via the DISTRO_ERRATA registry
 
 Everything is stdlib-only and goes through `http.py` (FIPS-hardened TLS, retry).
 All feed URLs are FIXED constants — never user-supplied — so the dashboard can
@@ -24,6 +25,7 @@ offline fixtures (no network).
 
 from __future__ import annotations
 
+import bz2
 import json
 import os
 import re
@@ -40,8 +42,10 @@ _CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.I)
 KEV_URL = ("https://www.cisa.gov/sites/default/files/feeds/"
            "known_exploited_vulnerabilities.json")
 EPSS_URL = "https://api.first.org/data/v1/epss"
-# {major} is filled from detect_distro(); the host's own errata stream.
+# {major} / {year} are filled from detect_distro(); the host's own errata stream.
 ALMA_ERRATA_RSS = "https://errata.almalinux.org/{major}/errata.rss"
+ROCKY_APOLLO = "https://apollo.build.resf.org/v2/advisories"
+ORACLE_OVAL = "https://linux.oracle.com/security/oval/com.oracle.elsa-{year}.xml.bz2"
 
 # Map the many severity vocabularies (NVD baseSeverity, Red Hat/errata words)
 # onto our four-level scale.
@@ -233,6 +237,94 @@ def _rfc822_date(value: str) -> str:
         return ""
 
 
+def parse_rocky_apollo(data: Dict, major: str = "", limit: int = 50) -> List[NewsItem]:
+    """Rocky Linux Apollo (RESF) advisories JSON -> NewsItems.
+
+    Keeps advisories affecting `major` when known (else all). Severity arrives as
+    e.g. "SEVERITY_IMPORTANT".
+    """
+    advs = data.get("advisories") if isinstance(data, dict) else None
+    out: List[NewsItem] = []
+    for a in advs or []:
+        name = str(a.get("name", "")).strip()
+        if not name:
+            continue
+        products = a.get("affectedProducts") or []
+        if major and products and not any(
+                str(p).rstrip().endswith(major) for p in products):
+            continue
+        sev = _norm_sev(str(a.get("severity", "")).replace("SEVERITY_", ""))
+        cves = [str(c.get("name", "")).upper()
+                for c in (a.get("cves") or []) if c.get("name")]
+        out.append(NewsItem(
+            id=f"rocky:{name}", source="rocky",
+            title=f"{name} {a.get('synopsis', '')}".strip(), severity=sev,
+            published=str(a.get("publishedAt", ""))[:10],
+            url=f"https://errata.build.resf.org/{name}",
+            summary=str(a.get("topic") or a.get("description") or "")[:400],
+            cve_ids=list(dict.fromkeys(cves))))
+    out.sort(key=lambda i: i.published, reverse=True)
+    return out[:limit]
+
+
+def _ln(elem) -> str:
+    """Local (namespace-stripped) tag name of an XML element."""
+    return elem.tag.rsplit("}", 1)[-1]
+
+
+def parse_oracle_oval(text: str, major: str = "", limit: int = 50) -> List[NewsItem]:
+    """Oracle Linux ELSA OVAL (patch definitions) -> NewsItems.
+
+    Each `class="patch"` definition carries an ELSA title with its severity, the
+    affected platform, the issue date and the CVE/ELSA references. Keeps the
+    definitions affecting `major` when known.
+    """
+    root = _safe_xml(text)
+    if root is None:
+        return []
+    out: List[NewsItem] = []
+    for defn in root.iter():
+        if _ln(defn) != "definition" or defn.get("class") != "patch":
+            continue
+        title = severity = issued = elsa_url = elsa_id = ""
+        platforms: List[str] = []
+        cves: List[str] = []
+        for c in defn.iter():
+            ln = _ln(c)
+            if ln == "title" and c.text:
+                title = c.text.strip()
+            elif ln == "platform" and c.text:
+                platforms.append(c.text.strip())
+            elif ln == "severity" and c.text:
+                severity = c.text.strip()
+            elif ln == "issued":
+                issued = c.get("date", "") or issued
+            elif ln == "reference":
+                src = (c.get("source") or "").upper()
+                if src == "CVE" and c.get("ref_id"):
+                    cves.append(c.get("ref_id", "").upper())
+                elif src == "ELSA":
+                    elsa_url = c.get("ref_url") or elsa_url
+                    elsa_id = c.get("ref_id") or elsa_id
+        if major and platforms and not any(p.rstrip().endswith(major) for p in platforms):
+            continue
+        sev = _norm_sev(severity)
+        if sev == "unknown":
+            m = re.search(r"\((critical|important|moderate|low)\)", title, re.I)
+            if m:
+                sev = _norm_sev(m.group(1))
+        ident = elsa_id or (title.split(":", 1)[0].strip() if title else "")
+        if not ident:
+            continue
+        out.append(NewsItem(
+            id=f"oracle:{ident}", source="oracle", title=title or ident,
+            severity=sev, published=(issued or "")[:10],
+            url=elsa_url or f"https://linux.oracle.com/errata/{ident}.html",
+            cve_ids=list(dict.fromkeys(cves))))
+    out.sort(key=lambda i: i.published, reverse=True)
+    return out[:limit]
+
+
 # --------------------------------------------------------------------------- #
 # Network fetchers (soft-failing wrappers around the parsers).
 # --------------------------------------------------------------------------- #
@@ -257,27 +349,63 @@ def fetch_nvd_recent(cfg, limit: int = 50, days: int = 7) -> List[NewsItem]:
         return []
 
 
+def _fetch_alma(cfg, major: str, limit: int) -> List[NewsItem]:
+    raw = http.get_bytes(ALMA_ERRATA_RSS.format(major=major), timeout=cfg.timeout)
+    return parse_errata_rss(raw.decode("utf-8", "replace"), "alma", limit)
+
+
+def _fetch_rocky(cfg, major: str, limit: int) -> List[NewsItem]:
+    url = f"{ROCKY_APOLLO}?page=0&limit={min(max(limit * 3, 30), 100)}"
+    data = http.get_json(url, timeout=cfg.timeout)
+    items = parse_rocky_apollo(data, major, limit)
+    if not items and major:                         # nothing for this major -> show all
+        items = parse_rocky_apollo(data, "", limit)
+    return items
+
+
+# Cap the decompressed OVAL so a malformed/hostile bz2 can't bomb memory; the
+# real Oracle year feed is ~10-15 MB decompressed.
+_MAX_OVAL_BYTES = 256 * 1024 * 1024
+
+
+def _fetch_oracle(cfg, major: str, limit: int) -> List[NewsItem]:
+    year = datetime.now(timezone.utc).year
+    for yr in (year, year - 1):                      # early in the year, fall back
+        try:
+            raw = http.get_bytes(ORACLE_OVAL.format(year=yr),
+                                 timeout=max(cfg.timeout, 60))
+            # Bounded decompression (decompression-bomb guard).
+            text = bz2.BZ2Decompressor().decompress(
+                raw, _MAX_OVAL_BYTES).decode("utf-8", "replace")
+        except (http.HttpError, OSError, ValueError):
+            continue
+        items = parse_oracle_oval(text, major, limit)
+        if items:
+            return items
+    return []
+
+
+# distro id (/etc/os-release ID) -> fetcher(cfg, major, limit). Each distro has
+# its own native errata format (AlmaLinux RSS, Rocky Apollo JSON, Oracle OVAL).
+DISTRO_ERRATA: Dict[str, Callable] = {
+    "almalinux": _fetch_alma, "alma": _fetch_alma,
+    "rocky": _fetch_rocky,
+    "ol": _fetch_oracle, "oracle": _fetch_oracle, "oraclelinux": _fetch_oracle,
+}
+# NewsItem.source labels produced by the distro fetchers (for `news --source distro`).
+DISTRO_SOURCES = {"alma", "rocky", "oracle"}
+
+
 def fetch_distro_errata(cfg, limit: int = 50) -> List[NewsItem]:
     from .scanners.oval import detect_distro
     distro, major = detect_distro()
-    spec = DISTRO_ERRATA.get(distro)
-    if spec is None:
+    fetch = DISTRO_ERRATA.get(distro)
+    if fetch is None:
         return []
-    url_tmpl, source = spec
     try:
-        raw = http.get_bytes(url_tmpl.format(major=major), timeout=cfg.timeout)
-        return parse_errata_rss(raw.decode("utf-8", "replace"), source, limit)
-    except (http.HttpError, ValueError):
+        return fetch(cfg, major, limit)
+    except (http.HttpError, OSError, ValueError):
         return []
-
-
-# distro id (/etc/os-release ID) -> (errata RSS url template, source label).
-# Rocky/Oracle can be added here once their parsers land; KEV+NVD+EPSS already
-# cover those hosts in the meantime.
-DISTRO_ERRATA: Dict[str, tuple] = {
-    "almalinux": (ALMA_ERRATA_RSS, "alma"),
-    "alma": (ALMA_ERRATA_RSS, "alma"),
-}
 
 # News sources shown in the dashboard tab. name -> (label, fetch(cfg, limit)).
 FEED_SOURCES: Dict[str, tuple] = {

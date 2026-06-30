@@ -473,7 +473,8 @@ user-supplied):
 
 - **CISA KEV** — Known Exploited Vulnerabilities (actively exploited in the wild).
 - **NVD** — recently published CVEs (NIST NVD API 2.0).
-- **distro errata** — the host distribution's own advisories (AlmaLinux today).
+- **distro errata** — the host distribution's own advisories: AlmaLinux, Rocky
+  Linux (RESF/Apollo) and Oracle Linux (ELSA), selected automatically.
 
 Advisories are cached under `<state-dir>/news-cache.json` so the command (and the
 dashboard tab) work offline. Items whose CVE matches the last scan are tagged
