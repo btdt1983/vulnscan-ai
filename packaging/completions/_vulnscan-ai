@@ -5,6 +5,7 @@ _vulnscan-ai() {
   local curcontext="$curcontext" state line
   local -a cmds sev scanners providers
   cmds=(
+    'menu:interactive menu covering every command (default with no command)'
     'info:show host/FIPS/GPU/scanner/provider status'
     'scan:scan for vulnerabilities'
     'fix:propose and (with approval) apply fixes'

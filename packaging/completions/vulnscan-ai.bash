@@ -3,7 +3,7 @@ _vulnscan_ai() {
     local cur prev cmds global i cmd opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="info scan fix rollback report providers setup update-oval scheduled dashboard news"
+    cmds="menu info scan fix rollback report providers setup update-oval scheduled dashboard news"
     global="--help --version --no-banner --config --state-dir --provider --model"
 
     # value completions that depend on the previous word
@@ -28,7 +28,7 @@ _vulnscan_ai() {
     cmd=""
     for ((i=1; i<COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            info|scan|fix|rollback|report|providers|setup|update-oval|scheduled|dashboard|news)
+            menu|info|scan|fix|rollback|report|providers|setup|update-oval|scheduled|dashboard|news)
                 cmd="${COMP_WORDS[i]}"; break;;
         esac
     done

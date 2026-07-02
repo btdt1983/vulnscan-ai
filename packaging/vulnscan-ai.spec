@@ -2,7 +2,7 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.2.3
+Version:        0.2.4b0
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +104,16 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Thu Jul 02 2026 vulnscan-ai <noreply@example.invalid> - 0.2.4b0-1
+- BETA. Interactive, menu-driven front-end: run 'vulnscan-ai' with no command on
+  a terminal (or 'vulnscan-ai menu') for a navigable menu that covers every
+  command — scan, fix, rollback, report, news, info, providers, dashboard,
+  scheduled, update-oval and setup — so flags need not be memorised. Arrow-key
+  curses UI with a numbered-prompt fallback for terminals without cursor support
+  (or VULNSCANAI_NO_CURSES=1); non-interactive/piped runs still print help. Each
+  choice is turned into the ordinary command and run through the real parser, so
+  behaviour is identical to typing it by hand.
+
 * Tue Jun 30 2026 vulnscan-ai <noreply@example.invalid> - 0.2.3-1
 - BUGFIX (0.2.2 already-patched filter): the filter matched on package name
   only, so it never caught 'oscap' findings (which carry an advisory but no

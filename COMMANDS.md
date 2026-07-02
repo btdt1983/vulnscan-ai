@@ -12,6 +12,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 
 | Command | Purpose |
 |---|---|
+| [`menu`](#menu) | Interactive menu covering every command (also the default with no command) |
 | [`info`](#info) | Show host / FIPS / GPU / scanner / provider status |
 | [`scan`](#scan) | Scan for vulnerabilities; save findings; optional report/export |
 | [`fix`](#fix) | Propose AI remediation and (with approval) apply it — transactional, with auto-rollback |
@@ -52,6 +53,28 @@ vulnscan-ai --provider claude --model claude-opus-4-8 --effort max fix --dry-run
 
 Wherever `--min-severity` / `--fail-on` appear, use one of:
 `low` < `moderate` < `important` < `critical` (`high`≡`important`, `medium`≡`moderate`).
+
+---
+
+## `menu`
+
+Launch an interactive, menu-driven front-end so you don't have to remember flags.
+It covers **every** command: scan, fix, rollback, report, news, info, providers,
+dashboard, scheduled, update-oval and setup.
+
+```bash
+vulnscan-ai menu     # explicit
+vulnscan-ai          # same thing — with no command on a terminal, the menu opens
+```
+
+Navigate with the arrow keys and Enter (a highlighted arrow-key list); press `q`
+or Esc to go back. On terminals without cursor support (dumb terminals, some SSH
+sessions, `TERM=dumb`, or `VULNSCANAI_NO_CURSES=1`) it automatically falls back
+to a plain numbered prompt. Each choice is turned into the ordinary command and
+run, so behaviour is identical to typing it by hand. Piped/non-interactive runs
+(no TTY) still print help instead of opening the menu, so scripts are unaffected.
+
+No options.
 
 ---
 

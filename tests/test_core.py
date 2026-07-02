@@ -1807,5 +1807,163 @@ class TestNewsRender(unittest.TestCase):
         self.assertIn("news_enabled", html)
 
 
+class TestMenu(unittest.TestCase):
+    """The interactive menu turns choices into the same argv the CLI parses."""
+
+    def setUp(self):
+        from vulnscanai import menu
+        self.menu = menu
+        # Snapshot the interactive helpers so each test can stub them safely.
+        self._orig = {n: getattr(menu, n) for n in
+                      ("_choose", "_multi_choose", "_ask", "_ask_yesno")}
+
+    def tearDown(self):
+        for n, fn in self._orig.items():
+            setattr(self.menu, n, fn)
+
+    def _stub(self, *, choose=(), multi=(), ask=(), yesno=()):
+        """Replace the menu's interactive helpers with scripted queues."""
+        cq, mq, aq, yq = list(choose), list(multi), list(ask), list(yesno)
+        self.menu._choose = lambda *a, **k: cq.pop(0)
+        self.menu._multi_choose = lambda *a, **k: mq.pop(0)
+        self.menu._ask = lambda *a, **k: aq.pop(0)
+        self.menu._ask_yesno = lambda *a, **k: yq.pop(0)
+
+    def _parses(self, argv):
+        """Assert the built argv is accepted by the real CLI parser."""
+        from vulnscanai.cli import build_parser
+        args = build_parser().parse_args(argv)
+        self.assertTrue(hasattr(args, "func"))
+        return args
+
+    def test_scan_all_default_enrich(self):
+        self._stub(choose=["all", None], ask=[""], yesno=[True])
+        argv = self.menu._b_scan(Config())
+        self.assertEqual(argv, ["scan", "--all"])
+        self._parses(argv)
+
+    def test_scan_choose_scanners_and_severity_no_enrich(self):
+        self._stub(choose=["choose", "important"],
+                   multi=[["dnf", "ssh"]], ask=["/tmp/r.pdf"], yesno=[False])
+        argv = self.menu._b_scan(Config())
+        self.assertEqual(argv, ["scan", "--scanner", "dnf", "--scanner", "ssh",
+                                "--min-severity", "important",
+                                "--no-enrich", "--pdf", "/tmp/r.pdf"])
+        self._parses(argv)
+
+    def test_scan_cancel_at_scanners(self):
+        self._stub(choose=[self.menu._CANCEL])
+        self.assertIsNone(self.menu._b_scan(Config()))
+
+    def test_fix_scan_then_export_ansible(self):
+        self._stub(choose=["scan", "all", None, "ansible"],
+                   ask=["play.yml"])
+        argv = self.menu._b_fix(Config())
+        self.assertEqual(argv, ["fix", "--scan", "--all",
+                                "--export-ansible", "play.yml"])
+        self._parses(argv)
+
+    def test_fix_auto_requires_confirmation(self):
+        # Decline the "really auto-apply?" guard -> the action is abandoned.
+        self._stub(choose=["saved", None, "auto"], yesno=[False])
+        self.assertIsNone(self.menu._b_fix(Config()))
+
+    def test_fix_auto_confirmed(self):
+        self._stub(choose=["saved", None, "auto"], yesno=[True])
+        argv = self.menu._b_fix(Config())
+        self.assertEqual(argv, ["fix", "--yes"])
+        self._parses(argv)
+
+    def test_rollback_list_and_id(self):
+        self._stub(choose=["list"])
+        self.assertEqual(self.menu._b_rollback(Config()), ["rollback", "--list"])
+        self._stub(choose=["id"], ask=["dnf:CVE-1"])
+        self.assertEqual(self.menu._b_rollback(Config()),
+                         ["rollback", "dnf:CVE-1"])
+
+    def test_report_argv(self):
+        self._stub(choose=["critical"], ask=["out.pdf"])
+        argv = self.menu._b_report(Config())
+        self.assertEqual(argv, ["report", "-o", "out.pdf",
+                                "--min-severity", "critical"])
+        self._parses(argv)
+
+    def test_news_argv(self):
+        self._stub(choose=["distro"], ask=["10"], yesno=[True])
+        argv = self.menu._b_news(Config())
+        self.assertEqual(argv, ["news", "--source", "distro",
+                                "--refresh", "--limit", "10"])
+        self._parses(argv)
+
+    def test_dashboard_start_argv(self):
+        self._stub(choose=["start", "0.0.0.0"], ask=["8443"])
+        argv = self.menu._b_dashboard(Config())
+        self.assertEqual(argv, ["dashboard", "--port", "8443",
+                                "--bind", "0.0.0.0"])
+        self._parses(argv)
+
+    def test_dashboard_allow_argv(self):
+        self._stub(choose=["allow"], ask=["10.0.0.0/24"])
+        self.assertEqual(self.menu._b_dashboard(Config()),
+                         ["dashboard", "--allow", "10.0.0.0/24"])
+
+    def test_scheduled_argv(self):
+        self._stub(choose=["default", "important"], yesno=[True, False])
+        argv = self.menu._b_scheduled(Config())
+        self.assertEqual(argv, ["scheduled", "--plan",
+                                "--fail-on", "important"])
+        self._parses(argv)
+
+    def test_trivial_builders(self):
+        for key, expect in (("info", ["info"]), ("providers", ["providers"]),
+                            ("setup", ["setup"])):
+            self.assertEqual(self.menu._BUILDERS[key](Config()), expect)
+            self._parses(expect)
+
+    def test_every_top_entry_has_a_builder(self):
+        for _label, key in self.menu._TOP:
+            self.assertIn(key, self.menu._BUILDERS)
+
+    def test_numbered_choose_selects(self):
+        items = [("a", 1), ("b", 2), ("c", 3)]
+        import builtins
+        orig = builtins.input
+        builtins.input = lambda *_a: "2"
+        try:
+            self.assertEqual(self.menu._numbered_choose("t", items, None), 2)
+        finally:
+            builtins.input = orig
+
+    def test_numbered_choose_quit(self):
+        import builtins
+        orig = builtins.input
+        builtins.input = lambda *_a: "q"
+        try:
+            self.assertIs(self.menu._numbered_choose("t", [("a", 1)], None),
+                          self.menu._CANCEL)
+        finally:
+            builtins.input = orig
+
+    def test_numbered_multi_parses_list(self):
+        import builtins
+        orig = builtins.input
+        builtins.input = lambda *_a: "1, 3"
+        try:
+            self.assertEqual(
+                self.menu._numbered_multi("t", ["dnf", "ssh", "ports"]),
+                ["dnf", "ports"])
+        finally:
+            builtins.input = orig
+
+    def test_run_command_dispatches(self):
+        # A real end-to-end: build ['info'] and run it through the parser.
+        from vulnscanai.cli import build_parser
+        buf = io.StringIO()
+        import contextlib
+        with contextlib.redirect_stdout(buf):
+            self.menu._run_command(Config(), build_parser(), ["info"])
+        self.assertIn("vulnscan-ai", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

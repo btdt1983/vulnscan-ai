@@ -49,6 +49,14 @@ Where a severity is accepted, use one of, in increasing order:
 .BR low ", " moderate ", " important ", " critical
 (\fBhigh\fR is treated as \fBimportant\fR, \fBmedium\fR as \fBmoderate\fR).
 .SH COMMANDS
+.SS menu
+Launch an interactive, menu-driven front-end that covers every command, so flags
+need not be memorised. Running
+.B vulnscan-ai
+with no command on a terminal opens the same menu. Navigate with the arrow keys
+and Enter (press \fBq\fR or Esc to go back); on terminals without cursor support
+(or with \fBVULNSCANAI_NO_CURSES=1\fR) it falls back to a numbered prompt. Piped,
+non-interactive invocations print help instead. No options.
 .SS info
 Show version, FIPS status, GPU/CPU, available scanners, and AI provider readiness.
 No options.

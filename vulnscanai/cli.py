@@ -695,6 +695,12 @@ def cmd_dashboard(cfg: Config, args) -> int:
         return 1
 
 
+def cmd_menu(cfg: Config, args) -> int:
+    """Launch the interactive, menu-driven front-end."""
+    from .menu import run_menu
+    return run_menu(cfg, build_parser())
+
+
 def cmd_providers(cfg: Config, args) -> int:
     for name, cls in PROVIDERS.items():
         inst = cls()
@@ -770,7 +776,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"],
                    help="Claude reasoning effort (turns on adaptive thinking; "
                         "other providers ignore it)")
-    sub = p.add_subparsers(dest="command", required=True)
+    # Optional: bare `vulnscan-ai` on a terminal opens the interactive menu.
+    sub = p.add_subparsers(dest="command", required=False)
+
+    sp = sub.add_parser("menu",
+                        help="interactive menu (also the default with no command)")
+    sp.set_defaults(func=cmd_menu)
 
     sp = sub.add_parser("info", help="show host/FIPS/scanner/provider status")
     sp.set_defaults(func=cmd_info)
@@ -913,6 +924,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_setup(cfg)
         cfg = Config.load(args.config)
         _apply_overrides(cfg, args)
+
+    # No subcommand: open the interactive menu on a real terminal, otherwise
+    # (pipes, scripts, cron) show help and exit non-zero.
+    if not getattr(args, "command", None):
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            from .menu import run_menu
+            try:
+                return run_menu(cfg, parser)
+            except KeyboardInterrupt:
+                _eprint("\nInterrupted.")
+                return 130
+        parser.print_help()
+        return 1
 
     try:
         return args.func(cfg, args)

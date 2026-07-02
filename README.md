@@ -163,6 +163,10 @@ a mirrored repo.
 > command, all options, examples, exit codes, and config precedence).
 
 ```bash
+# Prefer not to memorise flags? Run with no command for an interactive menu
+# (arrow keys / numbered) that covers every command:
+vulnscan-ai            # or: vulnscan-ai menu
+
 # Show host / FIPS / scanner / provider status
 vulnscan-ai info
 
