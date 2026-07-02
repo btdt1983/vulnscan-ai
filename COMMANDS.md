@@ -476,6 +476,10 @@ allow-list opens it to specific network clients; loopback is always allowed.
 Also serves `GET /api/findings.json` (authenticated). Run it as a service with
 `systemctl enable --now vulnscan-ai-dashboard`.
 
+**Summary tiles.** The overview shows total and per-severity counts, plus an
+**actively-exploited (CISA KEV)** tile and an **EPSS ≥50%** tile whenever a
+finding matches — the highest-priority signals up front.
+
 **Actions in the UI.** A **Scan now** button runs the configured scanners in the
 background; per-finding **Preview fix** shows the AI's proposed plan (dry-run, no
 execution). **Apply fix** runs the fix transactionally on the host and is **off

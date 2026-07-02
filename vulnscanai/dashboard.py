@@ -421,6 +421,21 @@ def render_dashboard(findings: List[Finding], host: str, scanned_at: str,
             (f.severity or "unknown").lower(), 0) + 1
     tiles = [f'<div class="tile"><div class="n">{len(findings)}</div>'
              f'<div class="l">total</div></div>']
+    # Exploitation-intel tiles sit right after the total: the actively-exploited
+    # (CISA KEV) count is the single highest-priority signal, so surface it here
+    # rather than burying it in the list. EPSS-high (>=50% predicted exploit
+    # probability) follows when present.
+    exploited = sum(1 for f in findings if f.exploited)
+    epss_high = sum(1 for f in findings
+                    if f.epss is not None and f.epss >= 0.5)
+    if exploited:
+        tiles.append(
+            '<div class="tile"><div class="n" style="color:#b3001b">'
+            f'{exploited}</div><div class="l">exploited (KEV)</div></div>')
+    if epss_high:
+        tiles.append(
+            '<div class="tile"><div class="n" style="color:#7a5b00">'
+            f'{epss_high}</div><div class="l">EPSS &ge;50%</div></div>')
     for sev in ("critical", "important", "moderate", "low"):
         if counts.get(sev):
             tiles.append(

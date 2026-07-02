@@ -1050,6 +1050,20 @@ class TestDashboard(unittest.TestCase):
         self.assertIn("CVE-2026-9", page)
         self.assertIn("10.0.0.0/24", page)
 
+    def test_exploited_kev_and_epss_tiles(self):
+        kev = _finding(severity="important", title="a", exploited=True, epss=0.9)
+        plain = _finding(severity="low", title="b")
+        page = dashboard.render_dashboard([kev, plain], "h", "now", [])
+        self.assertIn("exploited (KEV)", page)
+        self.assertIn("EPSS &ge;50%", page)
+        self.assertIn("#b3001b", page)                 # red KEV tile colour
+
+    def test_no_exploit_tiles_when_none(self):
+        # No KEV / high-EPSS findings -> the extra tiles are omitted entirely.
+        page = dashboard.render_dashboard([_finding(severity="low")], "h", "now", [])
+        self.assertNotIn("exploited (KEV)", page)
+        self.assertNotIn("EPSS &ge;50%", page)
+
     def test_render_escapes_html(self):
         f = _finding(title="<script>alert(1)</script>", package=None, cve_ids=[])
         page = dashboard.render_dashboard([f], "h", "now", [])

@@ -2,7 +2,8 @@
 %global mod_name vulnscanai
 
 Name:           vulnscan-ai
-Version:        0.2.4b0
+Epoch:          1
+Version:        0.2.4
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -104,6 +105,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Thu Jul 02 2026 vulnscan-ai <noreply@example.invalid> - 1:0.2.4-1
+- STABLE. Graduates the 0.2.4b0 interactive menu to final and adds a small
+  dashboard touch: the summary row now carries an actively-exploited (CISA KEV)
+  tile and an EPSS >=50% tile whenever a finding matches, surfacing the
+  highest-priority exploitation signals up front instead of only in the list.
+- Introduces Epoch 1 so this release cleanly supersedes the 0.2.4b0 pre-release
+  (RPM ranks '0.2.4b0' above '0.2.4', so without an epoch 'dnf update' would not
+  move beta hosts to the final). Epoch stays 1 for subsequent releases.
+
 * Thu Jul 02 2026 vulnscan-ai <noreply@example.invalid> - 0.2.4b0-1
 - BETA. Interactive, menu-driven front-end: run 'vulnscan-ai' with no command on
   a terminal (or 'vulnscan-ai menu') for a navigable menu that covers every
