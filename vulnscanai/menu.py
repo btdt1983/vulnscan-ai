@@ -97,18 +97,43 @@ def _pause() -> None:
 # --------------------------------------------------------------------------- #
 # single-choice widget (curses, with numbered fallback)
 # --------------------------------------------------------------------------- #
-def _choose(title: str, items: List[_Item],
-            subtitle: Optional[str] = None) -> object:
-    """Pick one item. Returns its value, or _CANCEL on q/Esc/interrupt."""
+def _banner_lines() -> List[str]:
+    """The branded banner as plain (unicode, no-ANSI) lines, for drawing inside
+    the menu — the curses screen clears the terminal, so the banner main() prints
+    would otherwise vanish. Honours VULNSCANAI_NO_BANNER."""
+    if os.environ.get("VULNSCANAI_NO_BANNER"):
+        return []
+
+    class _Plain:                       # non-tty (no colour) but UTF-8 (box chars)
+        encoding = "UTF-8"
+
+        def isatty(self):
+            return False
+
+        def write(self, *a):
+            pass
+
+    try:
+        from . import branding
+        return branding.banner(socket.gethostname(), stream=_Plain()).splitlines()
+    except Exception:  # noqa: BLE001 -- a banner is never worth crashing the menu
+        return []
+
+
+def _choose(title: str, items: List[_Item], subtitle: Optional[str] = None,
+            header_lines: Optional[List[str]] = None) -> object:
+    """Pick one item. Returns its value, or _CANCEL on q/Esc/interrupt.
+    `header_lines` (e.g. the banner) are drawn above the title on the top menu."""
     if _use_curses():
         try:
-            return _curses_choose(title, items, subtitle)
+            return _curses_choose(title, items, subtitle, header_lines)
         except Exception:  # noqa: BLE001 -- never let a draw glitch kill the menu
             pass
-    return _numbered_choose(title, items, subtitle)
+    return _numbered_choose(title, items, subtitle, header_lines)
 
 
-def _curses_choose(title: str, items: List[_Item], subtitle: Optional[str]):
+def _curses_choose(title: str, items: List[_Item], subtitle: Optional[str],
+                   header_lines: Optional[List[str]] = None):
     import curses
 
     def _inner(stdscr):
@@ -123,6 +148,12 @@ def _curses_choose(title: str, items: List[_Item], subtitle: Optional[str]):
             stdscr.erase()
             h, w = stdscr.getmaxyx()
             row = 0
+            # Draw the banner header only when the terminal is tall enough to
+            # keep all the menu items visible below it.
+            if header_lines and h > len(header_lines) + len(items) + 4:
+                for line in header_lines:
+                    row = _addln(stdscr, row, w, line, curses.A_NORMAL)
+                row += 1
             row = _addln(stdscr, row, w, title, curses.A_BOLD)
             if subtitle:
                 row = _addln(stdscr, row, w, subtitle, curses.A_DIM)
@@ -152,7 +183,10 @@ def _curses_choose(title: str, items: List[_Item], subtitle: Optional[str]):
     return curses.wrapper(_inner)
 
 
-def _numbered_choose(title: str, items: List[_Item], subtitle: Optional[str]):
+def _numbered_choose(title: str, items: List[_Item], subtitle: Optional[str],
+                     header_lines: Optional[List[str]] = None):
+    if header_lines:
+        print("\n" + "\n".join(header_lines))
     print(f"\n{title}")
     if subtitle:
         print(f"  {subtitle}")
@@ -528,9 +562,14 @@ def _run_command(cfg, parser, argv: List[str]) -> None:
 
 def run_menu(cfg, parser) -> int:
     """Interactive front-end loop. `parser` is the CLI's build_parser() result."""
-    subtitle = f"host {socket.gethostname()} · v{__version__}"
+    # The banner is drawn as the menu header (the curses screen clears the
+    # terminal, so a pre-printed banner would vanish). When the banner is shown
+    # it already carries host + version, so the subtitle is only a fallback.
+    header = _banner_lines()
+    subtitle = None if header else f"host {socket.gethostname()} · v{__version__}"
     while True:
-        key = _choose("vulnscan·ai — interactive menu", _TOP, subtitle=subtitle)
+        key = _choose("vulnscan·ai — interactive menu", _TOP,
+                      subtitle=subtitle, header_lines=header)
         if key is _CANCEL:
             print("Bye.")
             return 0

@@ -16,6 +16,7 @@ from .base import AIProvider, ProviderError
 class KimiProvider(AIProvider):
     name = "kimi"
     default_model = "moonshot-v1-8k"
+    known_models = ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
     api_key_env = "MOONSHOT_API_KEY"
 
     @property

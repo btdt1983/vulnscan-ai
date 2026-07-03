@@ -19,6 +19,7 @@ from .base import AIProvider, ProviderError
 class MistralProvider(AIProvider):
     name = "mistral"
     default_model = "open-mixtral-8x7b"
+    known_models = ["open-mixtral-8x7b", "mistral-small-latest", "mistral-large-latest"]
     api_key_env = "MISTRAL_API_KEY"
 
     @property

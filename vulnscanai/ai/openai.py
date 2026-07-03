@@ -17,6 +17,7 @@ from .base import AIProvider, ProviderError
 class OpenAIProvider(AIProvider):
     name = "openai"
     default_model = "gpt-4o"
+    known_models = ["gpt-4o", "gpt-4o-mini"]
     api_key_env = "OPENAI_API_KEY"
 
     @property

@@ -69,9 +69,10 @@ two ways to set it up.
 Run **`vulnscan-ai setup`** (it also runs on the first interactive use) and pick:
 
 - **A cloud provider** — `claude` / `openai` / `gemini` / `kimi` / `deepseek` /
-  `mistral`. Paste the API key (hidden input), optionally choose a model and, for
-  Claude, the reasoning effort. The key is stored in the per-user config (mode
-  0600) and used automatically — no environment variable to manage.
+  `mistral`. Paste the API key (hidden input), pick the model from a menu of known
+  ids for that provider (a custom id is still allowed) and, for Claude, the
+  reasoning effort. The key is stored in the per-user config (mode 0600) and used
+  automatically — no environment variable to manage.
 - **A local, offline model** — download an Ollama model sized to the host; no
   key, nothing leaves the machine.
 

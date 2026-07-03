@@ -28,9 +28,38 @@ MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 class HttpError(Exception):
     def __init__(self, status: int, message: str, body: str = ""):
-        super().__init__(f"HTTP {status}: {message}")
+        detail = f"HTTP {status}: {message}"
+        # Surface the server's own error text (e.g. an API's "credit balance is
+        # too low" message) instead of a bare "Bad Request" — that reason is
+        # usually the only actionable part, and callers only render str(exc).
+        reason = _error_reason(body)
+        if reason:
+            detail += f" — {reason}"
+        super().__init__(detail)
         self.status = status
         self.body = body
+
+
+def _error_reason(body: str, limit: int = 300) -> str:
+    """Pull a human-readable reason out of a response body. Handles the common
+    JSON error shapes ({"error": {"message": ...}}, {"error": "..."},
+    {"message": ...}); falls back to the trimmed raw body."""
+    body = (body or "").strip()
+    if not body:
+        return ""
+    try:
+        data = json.loads(body)
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict) and err.get("message"):
+                return str(err["message"])[:limit]
+            if isinstance(err, str) and err:
+                return err[:limit]
+            if data.get("message"):
+                return str(data["message"])[:limit]
+    except (ValueError, TypeError):
+        pass
+    return body[:limit]
 
 
 def _request(

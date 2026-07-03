@@ -3,7 +3,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.2.4
+Version:        0.2.5
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -105,6 +105,24 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jul 03 2026 vulnscan-ai <noreply@example.invalid> - 1:0.2.5-1
+- AI provider/model UX + error visibility:
+  * setup now picks the cloud model from a MENU of known ids per provider (with a
+    custom-id escape hatch), so a typo'd id like 'Sonnet 5' can't be saved and
+    silently break every remediation.
+  * setup reuses an already-saved API key ("reuse it? [Y/n]"), so you can switch
+    provider or just change the model without pasting the key again.
+  * picking the local (Ollama) backend now takes effect immediately — the choice
+    is persisted up front, so a deferred/offline download no longer leaves the
+    tool silently using the previous cloud provider.
+- HTTP errors now surface the server's own message (e.g. "credit balance is too
+  low") instead of a bare "HTTP 400: Bad Request", for every provider.
+- fix: when an AI proposal fails it prints the real reason, and if EVERY proposal
+  fails (systemic — credits/key/model) it stops with that reason instead of
+  walking the operator through empty approval prompts.
+- The interactive menu draws the banner as its header, so it stays visible in the
+  full-screen (curses) view.
+
 * Thu Jul 02 2026 vulnscan-ai <noreply@example.invalid> - 1:0.2.4-1
 - STABLE. Graduates the 0.2.4b0 interactive menu to final and adds a small
   dashboard touch: the summary row now carries an actively-exploited (CISA KEV)

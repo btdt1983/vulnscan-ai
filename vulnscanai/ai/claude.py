@@ -17,6 +17,12 @@ class ClaudeProvider(AIProvider):
     # Sonnet is the cost-effective default for iterating over many CVEs;
     # pass --model claude-opus-4-8 for the most capable model.
     default_model = "claude-sonnet-4-6"
+    known_models = [
+        "claude-sonnet-4-6",              # balanced default
+        "claude-opus-4-8",                # most capable
+        "claude-haiku-4-5-20251001",      # fastest / cheapest
+        "claude-fable-5",
+    ]
     api_key_env = "ANTHROPIC_API_KEY"
     endpoint = "https://api.anthropic.com/v1/messages"
     api_version = "2023-06-01"

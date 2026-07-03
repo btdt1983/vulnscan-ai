@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional
+from typing import List, Optional
 
 
 class ProviderError(Exception):
@@ -22,6 +22,10 @@ class ProviderError(Exception):
 class AIProvider:
     name: str = "base"
     default_model: str = ""
+    # Curated known model ids offered as a menu by the setup wizard (the setup
+    # step also allows a custom id). Keep the recommended default first. Empty
+    # means "no curated list" — the wizard falls back to a free-text prompt.
+    known_models: List[str] = []
     # Environment variable that holds the API key for this provider.
     api_key_env: str = ""
 

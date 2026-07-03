@@ -11,6 +11,7 @@ from .base import AIProvider, ProviderError
 class GeminiProvider(AIProvider):
     name = "gemini"
     default_model = "gemini-2.0-flash"
+    known_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
     api_key_env = "GEMINI_API_KEY"
 
     def complete(self, system: str, user: str) -> str:

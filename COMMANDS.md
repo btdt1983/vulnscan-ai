@@ -371,10 +371,18 @@ Interactive first-run wizard. Choose how the AI remediation step gets its model:
   default provider/model. No API key; nothing leaves the host.
 - **Cloud provider + API key** — pick `claude` / `openai` / `gemini` / `kimi` /
   `deepseek` / `mistral`; it prompts for the key (hidden input) and stores it in
-  the per-user config (mode 0600), plus optional model and (for Claude) effort.
+  the per-user config (mode 0600). The model is chosen from a **menu of known
+  ids** for that provider (with a *custom* option and a *default* fallback), so a
+  typo'd id can't slip through; for Claude it also asks for the reasoning effort.
 
 It then offers to set up email notifications. Also runs automatically on the
 first interactive use.
+
+**Re-run `setup` any time to switch backend, provider or model.** If a key for
+the chosen cloud provider is already saved, it offers to **reuse it** — so you
+can change just the model without pasting the key again. Choosing the local
+backend takes effect immediately (the choice is saved up front), even if the
+model download is deferred or you're offline and the model is already present.
 
 ```bash
 vulnscan-ai setup

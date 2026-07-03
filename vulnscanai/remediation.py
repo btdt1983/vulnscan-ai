@@ -304,6 +304,12 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
     return rem
 
 
+# Sentinel summary for a remediation whose AI proposal raised — callers can
+# detect a failed proposal (and read .explanation for the reason) without
+# string-scanning ad hoc.
+PROPOSAL_FAILED = "(AI proposal failed)"
+
+
 def propose_all(provider: AIProvider, findings: List[Finding],
                 on_progress: Optional[Callable[[int, int, Finding], None]] = None
                 ) -> None:
@@ -315,7 +321,7 @@ def propose_all(provider: AIProvider, findings: List[Finding],
             f.remediation = propose(provider, f)
         except ProviderError as exc:
             f.remediation = Remediation(
-                summary="(AI proposal failed)",
+                summary=PROPOSAL_FAILED,
                 explanation=str(exc),
                 provider=provider.name,
                 model=provider.model,

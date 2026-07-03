@@ -161,23 +161,26 @@ def _setup_model(config, *, force: bool = False) -> int:
         config.mark_setup_done()
         return 0
 
+    # Persist the choice UP FRONT so selecting 'local' always takes effect, even
+    # if the download is interrupted — or the model is already present but
+    # 'ollama pull' can't reach the registry (offline). It can be pulled later.
+    path = config.write_user_config({"provider": "local", "model": model})
+    config.mark_setup_done()
+
     if not _ensure_server():
         print("\nWarning: the Ollama server doesn't appear to be running.")
         print("Start it with: sudo systemctl start ollama   (or: ollama serve)")
 
-    if not _pull(model):
-        print(f"\nFailed to download '{model}'. You can retry: ollama pull {model}")
-        config.mark_setup_done()
-        return 1
-
-    path = config.write_user_config({"provider": "local", "model": model})
-    config.mark_setup_done()
+    pulled = _pull(model)
     print("\n" + "=" * 64)
-    print(f"Done. Default provider set to 'local' with model '{model}'.")
+    print(f"Default provider set to 'local' with model '{model}'.")
     print(f"Saved to {path}")
+    if not pulled:
+        print(f"NOTE: could not download '{model}' now — it may already be present, "
+              f"or you're offline. Retry any time: ollama pull {model}")
     print("Try it:  vulnscan-ai scan  &&  vulnscan-ai fix --dry-run")
     print("=" * 64)
-    return 0
+    return 0 if pulled else 1
 
 
 def _configure_notifications(config) -> None:
@@ -238,6 +241,42 @@ _CLOUD_PROVIDERS = [
 ]
 
 
+def _pick_model(name: str) -> str:
+    """Let the operator pick a model id for a cloud provider from a menu of
+    known ids (with a custom-id escape hatch). Returns the chosen id, or "" to
+    mean "use the provider default". Prevents typo'd ids like 'Sonnet 5' that
+    the API would reject, leaving every remediation as '(AI proposal failed)'.
+    """
+    from .ai import PROVIDERS
+    cls = PROVIDERS.get(name)
+    default = getattr(cls, "default_model", "") if cls else ""
+    known = list(getattr(cls, "known_models", []) or [])
+    if not known:
+        # No curated list for this provider — keep the free-text prompt.
+        return _ask("  Model id (blank = provider default): ")
+
+    print("\n  Available models:")
+    for i, m in enumerate(known, 1):
+        tag = "  (default)" if m == default else ""
+        print(f"    {i}  {m}{tag}")
+    print("    c  custom — type a model id")
+    choice = _ask(f"  Choose a model [1-{len(known)}/c] "
+                  f"(blank = default {default}): ").lower()
+    if not choice:
+        return ""                                   # provider default
+    if choice == "c":
+        custom = _ask("  Custom model id: ")
+        return custom                               # may be "" -> default
+    try:
+        idx = int(choice) - 1
+    except ValueError:
+        idx = -1
+    if 0 <= idx < len(known):
+        return known[idx]
+    print(f"  Unrecognised choice; using the default ({default}).")
+    return ""
+
+
 def _configure_cloud_provider(config) -> int:
     """Pick a cloud AI provider and store its API key in the user config."""
     print("\n" + "-" * 64)
@@ -260,16 +299,27 @@ def _configure_cloud_provider(config) -> int:
     name, env, url = _CLOUD_PROVIDERS[idx]
 
     import getpass
-    try:
-        key = getpass.getpass(f"  Paste your {name} API key (hidden): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return 0
+    # Reuse an already-saved key so switching provider or just changing the model
+    # doesn't force the operator to paste the key again every time.
+    existing = (getattr(config, "api_keys", {}) or {}).get(env) or os.environ.get(env)
+    key = ""
+    if existing:
+        ans = _ask(f"  A {name} API key is already saved. Reuse it? "
+                   f"[Y/n] (n = enter a new one): ").lower()
+        if ans in ("", "y", "yes"):
+            key = existing
+            print("  Reusing the saved key.")
+    if not key:
+        try:
+            key = getpass.getpass(f"  Paste your {name} API key (hidden): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
     if not key:
         print("  No key entered; skipping.")
         return 0
 
-    model = _ask("  Model id (blank = provider default): ").strip()
+    model = _pick_model(name)
     effort = ""
     if name == "claude":
         effort = _ask("  Reasoning effort low|medium|high|xhigh|max "

@@ -435,6 +435,26 @@ def cmd_fix(cfg: Config, args) -> int:
 
     remediation.propose_all(provider, findings, on_progress=progress)
 
+    # Surface AI failures up front. A failed proposal used to show only an opaque
+    # "(AI proposal failed)" per finding, hiding the real reason (e.g. "credit
+    # balance is too low", an invalid key, or a bad model id). Print the distinct
+    # reasons, and if EVERY proposal failed it is systemic — stop rather than
+    # marching the operator through empty approval prompts.
+    failed = [f for f in findings
+              if f.remediation and f.remediation.summary == remediation.PROPOSAL_FAILED]
+    if failed:
+        reasons = list(dict.fromkeys(f.remediation.explanation or "unknown error"
+                                     for f in failed))
+        _eprint(f"\n  ! {len(failed)}/{len(findings)} AI proposal(s) failed:")
+        for r in reasons:
+            _eprint(f"      - {r}")
+        if len(failed) == len(findings):
+            _eprint(f"  All proposals failed via {provider.name}/{provider.model} — "
+                    f"this looks systemic (provider credits, API key, or model id). "
+                    f"Nothing to apply.")
+            _save_findings(cfg, findings)
+            return 2
+
     # Export-only mode: write a bash script and/or Ansible playbook, do not apply.
     if args.export_script or args.export_ansible:
         if args.export_script:
@@ -915,7 +935,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if getattr(args, "no_banner", False):
         os.environ["VULNSCANAI_NO_BANNER"] = "1"
-    print_banner(getattr(args, "command", None), _hostname())
+    # The interactive menu draws the banner itself (as a header that survives the
+    # curses screen clear), so skip the pre-print for it to avoid a double banner.
+    command = getattr(args, "command", None)
+    opening_menu = command == "menu" or (not command and sys.stdin.isatty()
+                                         and sys.stdout.isatty())
+    if not opening_menu:
+        print_banner(command, _hostname())
 
     # First run on an interactive terminal: offer the offline-model wizard,
     # then reload config so the just-made choice applies to this command.

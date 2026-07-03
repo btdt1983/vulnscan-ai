@@ -1169,6 +1169,194 @@ class TestApiKeyConfig(unittest.TestCase):
         self.assertEqual(saved["provider"], "claude")
         self.assertEqual(saved["api_keys"]["ANTHROPIC_API_KEY"], "sk-ant-test")
 
+    def test_cloud_setup_reuses_saved_key(self):
+        # Changing the model on a provider that already has a stored key must NOT
+        # force the operator to paste the key again.
+        import getpass
+        import vulnscanai.wizard as W
+        home = tempfile.mkdtemp()
+        cfg = Config()
+        cfg.api_keys = {"ANTHROPIC_API_KEY": "sk-ant-saved"}
+        answers = iter(["1", "y", "", ""])   # claude, reuse=yes, model default, effort
+        called = {"getpass": False}
+
+        def boom(prompt=""):
+            called["getpass"] = True
+            return "sk-should-not-be-used"
+
+        orig_ask, orig_gp = W._ask, getpass.getpass
+        orig_home = os.environ.get("HOME")
+        W._ask = lambda prompt="": next(answers, "")
+        getpass.getpass = boom
+        os.environ["HOME"] = home
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            W._configure_cloud_provider(cfg)
+            saved = json.load(open(os.path.join(
+                home, ".config", "vulnscan-ai", "config.json")))
+        finally:
+            W._ask, getpass.getpass = orig_ask, orig_gp
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertFalse(called["getpass"])          # key reused, not re-prompted
+        self.assertEqual(saved["provider"], "claude")
+        self.assertEqual(saved["api_keys"]["ANTHROPIC_API_KEY"], "sk-ant-saved")
+
+    def test_local_setup_persists_even_if_pull_fails(self):
+        # Picking 'local' must switch the provider even when the download can't
+        # complete (offline / already-present model), so it doesn't silently
+        # keep using the previous cloud provider.
+        import vulnscanai.wizard as W
+        home = tempfile.mkdtemp()
+        cfg = Config(state_dir=tempfile.mkdtemp())
+        names = ("_have", "_ensure_server", "_pull", "_ask",
+                 "compute_budget_gb", "mem_total_gb")
+        orig = {n: getattr(W, n) for n in names}
+        orig_home = os.environ.get("HOME")
+        W._have = lambda b: True
+        W._ensure_server = lambda: True
+        W._pull = lambda m: False                    # simulate a failed/offline pull
+        W._ask = lambda prompt="": "1"               # pick model #1
+        W.compute_budget_gb = lambda: {
+            "gpu": {"present": False, "vram_gb": 0, "name": "x", "kind": "cpu"},
+            "where": "cpu", "budget_gb": 8.0}
+        W.mem_total_gb = lambda: 16.0
+        os.environ["HOME"] = home
+        try:
+            rc = W._setup_model(cfg)
+            saved = json.load(open(os.path.join(
+                home, ".config", "vulnscan-ai", "config.json")))
+        finally:
+            for n, f in orig.items():
+                setattr(W, n, f)
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
+        self.assertEqual(saved["provider"], "local")
+        self.assertEqual(saved["model"], W.MODELS[0]["name"])
+        self.assertEqual(rc, 1)                       # pull failed, selection saved
+
+
+class TestHttpErrorReason(unittest.TestCase):
+    """HttpError must surface the server's own error text, not just the status,
+    so an API reason like 'credit balance is too low' reaches the operator."""
+
+    def test_anthropic_openai_error_shape(self):
+        from vulnscanai.http import HttpError, _error_reason
+        body = ('{"type":"error","error":{"type":"invalid_request_error",'
+                '"message":"Your credit balance is too low"}}')
+        self.assertEqual(_error_reason(body), "Your credit balance is too low")
+        self.assertIn("credit balance", str(HttpError(400, "Bad Request", body)))
+
+    def test_error_string_and_message_shapes(self):
+        from vulnscanai.http import _error_reason
+        self.assertEqual(_error_reason('{"error":"nope"}'), "nope")
+        self.assertEqual(_error_reason('{"message":"boom"}'), "boom")
+
+    def test_raw_and_empty_fallback(self):
+        from vulnscanai.http import HttpError, _error_reason
+        self.assertEqual(_error_reason("plain error"), "plain error")
+        self.assertEqual(_error_reason(""), "")
+        self.assertEqual(str(HttpError(500, "Server Error")), "HTTP 500: Server Error")
+
+
+class TestProposalFailure(unittest.TestCase):
+    def test_propose_all_records_reason(self):
+        from vulnscanai import remediation
+        from vulnscanai.ai.base import AIProvider, ProviderError
+
+        class Boom(AIProvider):
+            name = "boom"
+            default_model = "m"
+
+            def complete(self, system, user):
+                raise ProviderError("HTTP 400: Bad Request — credit balance is too low")
+
+        f = _finding()
+        remediation.propose_all(Boom(), [f])
+        self.assertEqual(f.remediation.summary, remediation.PROPOSAL_FAILED)
+        self.assertIn("credit balance", f.remediation.explanation)
+
+    def test_fix_aborts_when_all_proposals_fail(self):
+        import io, contextlib, types
+        from vulnscanai import cli
+        from vulnscanai.ai.base import AIProvider, ProviderError
+
+        class Broke(AIProvider):
+            name = "claude"
+            default_model = "claude-sonnet-4-6"
+            api_key_env = "ANTHROPIC_API_KEY"
+
+            def available(self):
+                return True
+
+            def complete(self, system, user):
+                raise ProviderError("HTTP 400: Bad Request — credit balance is too low")
+
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False           # skip the dnf-backed re-check in tests
+        cli._save_findings(cfg, [_finding()])
+        args = types.SimpleNamespace(
+            scan=False, scanner=None, all=False, no_enrich=True, min_severity=None,
+            provider=None, model=None, export_script=None, export_ansible=None,
+            dry_run=True, yes=False, pdf=None, ignore=None)
+        orig = cli.get_provider
+        cli.get_provider = lambda *a, **k: Broke()
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+                rc = cli.cmd_fix(cfg, args)
+        finally:
+            cli.get_provider = orig
+        self.assertEqual(rc, 2)                       # systemic failure -> abort
+        self.assertIn("credit balance", buf.getvalue())
+        self.assertIn("All proposals failed", buf.getvalue())
+
+
+class TestModelPicker(unittest.TestCase):
+    """The setup wizard offers a menu of known model ids so a bad free-text id
+    (the 'Sonnet 5' bug) can't be saved and break every remediation."""
+
+    def _pick(self, name, answers):
+        import vulnscanai.wizard as W
+        it = iter(answers)
+        orig = W._ask
+        W._ask = lambda prompt="": next(it, "")
+        try:
+            return W._pick_model(name)
+        finally:
+            W._ask = orig
+
+    def test_numbered_choice_returns_known_id(self):
+        # claude known_models[1] == claude-opus-4-8
+        self.assertEqual(self._pick("claude", ["2"]), "claude-opus-4-8")
+
+    def test_blank_means_provider_default(self):
+        self.assertEqual(self._pick("claude", [""]), "")
+
+    def test_custom_escape_hatch(self):
+        self.assertEqual(self._pick("claude", ["c", "claude-brand-new"]),
+                         "claude-brand-new")
+
+    def test_bad_id_falls_back_to_default_not_verbatim(self):
+        # The exact regression: 'Sonnet 5' must NOT be accepted as a model id.
+        self.assertEqual(self._pick("claude", ["Sonnet 5"]), "")
+
+    def test_out_of_range_falls_back(self):
+        self.assertEqual(self._pick("claude", ["99"]), "")
+
+    def test_provider_without_list_is_free_text(self):
+        # 'local' has no known_models -> free-text prompt, returned verbatim.
+        self.assertEqual(self._pick("local", ["llama3.2:1b"]), "llama3.2:1b")
+
+    def test_all_cloud_defaults_are_in_their_known_list(self):
+        from vulnscanai.ai import PROVIDERS
+        for name in ("claude", "openai", "gemini", "kimi", "deepseek", "mistral"):
+            cls = PROVIDERS[name]
+            self.assertIn(cls.default_model, cls.known_models,
+                          f"{name} default not in known_models")
+
 
 class TestClaudeEffort(unittest.TestCase):
     def _run(self, **kw):

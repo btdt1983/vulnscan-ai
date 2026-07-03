@@ -19,6 +19,7 @@ from .base import AIProvider, ProviderError
 class DeepSeekProvider(AIProvider):
     name = "deepseek"
     default_model = "deepseek-coder"
+    known_models = ["deepseek-coder", "deepseek-chat"]
     api_key_env = "DEEPSEEK_API_KEY"
 
     @property
