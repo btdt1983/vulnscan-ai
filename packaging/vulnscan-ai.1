@@ -1,4 +1,4 @@
-.TH VULNSCAN-AI 1 "June 2026" "vulnscan-ai @VERSION@" "User Commands"
+.TH VULNSCAN-AI 1 "July 2026" "vulnscan-ai @VERSION@" "User Commands"
 .SH NAME
 vulnscan-ai \- RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 .SH SYNOPSIS
@@ -80,6 +80,23 @@ Also write a JSON export.
 .TP
 .BI \-\-sarif " PATH"
 Also write a SARIF 2.1.0 file.
+.TP
+.BI \-\-compliance " PROFILE"
+Run a compliance benchmark (CIS, DISA STIG, PCI-DSS, HIPAA, ...) instead of a
+vulnerability scan, via \fBoscap xccdf eval\fR against the SCAP Security Guide.
+Reports a compliance score and every failing rule (sorted by severity, with
+CCE/CIS/STIG identifiers and whether an automated fix ships), saves them to
+\fI<state-dir>/compliance.json\fR, and honours \fB\-\-pdf\fR/\fB\-\-json\fR/\fB\-\-sarif\fR.
+Exits \fB3\fR when any rule fails. Not part of \fB\-\-all\fR. \fIPROFILE\fR is an
+alias (\fBcis-l1\fR, \fBcis-l2\fR, \fBstig\fR, \fBpci-dss\fR, \fBhipaa\fR, ...) or a
+full XCCDF profile id; omit it to use the configured \fBcompliance_profile\fR.
+Requires the \fBscap-security-guide\fR package.
+.TP
+.B \-\-list\-profiles
+List the compliance profiles this host's SCAP datastream offers, then exit.
+.TP
+.BI \-\-compliance\-datastream " PATH"
+Override the SCAP datastream (default: auto-detect for this distro).
 .SS fix
 Ask the AI provider to propose remediation, then apply with approval. Proposed
 commands are screened against a safety deny-list. The per-finding prompt accepts

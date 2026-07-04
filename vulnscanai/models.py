@@ -145,6 +145,119 @@ class Finding:
         return finding
 
 
+# --------------------------------------------------------------------------- #
+# Compliance benchmark (XCCDF / SCAP Security Guide) models
+# --------------------------------------------------------------------------- #
+# XCCDF rule severities differ from the Red Hat vulnerability severities above.
+# Map them onto the shared severity_rank scale so counts/sorting stay uniform.
+XCCDF_SEVERITY_ALIAS = {
+    "high": "important",
+    "medium": "moderate",
+    "low": "low",
+    "info": "low",
+    "unknown": "unknown",
+    "": "unknown",
+}
+
+# Rule outcomes worth surfacing as an actionable failure. XCCDF also emits
+# "pass", "notapplicable", "notchecked", "notselected", "informational" — those
+# are not failures. "error"/"unknown" mean the check could not run.
+COMPLIANCE_FAIL_RESULTS = {"fail"}
+COMPLIANCE_ERROR_RESULTS = {"error", "unknown"}
+
+
+@dataclass
+class ComplianceRule:
+    """A single XCCDF rule outcome from a benchmark evaluation."""
+
+    rule_id: str
+    title: str = ""
+    result: str = "unknown"        # pass|fail|notapplicable|error|... (XCCDF)
+    severity: str = "unknown"      # normalised to the shared severity scale
+    rationale: str = ""
+    fix_available: bool = False    # the rule ships a remediation (bash/ansible)
+    references: List[str] = field(default_factory=list)  # CCE/CIS/STIG idents
+
+    @property
+    def is_fail(self) -> bool:
+        return self.result in COMPLIANCE_FAIL_RESULTS
+
+    @property
+    def is_error(self) -> bool:
+        return self.result in COMPLIANCE_ERROR_RESULTS
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ComplianceRule":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
+@dataclass
+class ComplianceReport:
+    """The result of one `oscap xccdf eval` run against a profile."""
+
+    profile: str = ""              # xccdf profile id
+    profile_title: str = ""        # human-readable benchmark name
+    datastream: str = ""           # basename of the SCAP datastream used
+    score: float = 0.0             # 0-100, from the XCCDF <score> node
+    rules: List[ComplianceRule] = field(default_factory=list)
+    hostname: str = ""
+    generated: str = ""
+
+    @property
+    def pass_count(self) -> int:
+        return sum(1 for r in self.rules if r.result == "pass")
+
+    @property
+    def fail_count(self) -> int:
+        return sum(1 for r in self.rules if r.is_fail)
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for r in self.rules if r.is_error)
+
+    @property
+    def na_count(self) -> int:
+        return sum(1 for r in self.rules
+                   if r.result in ("notapplicable", "notselected",
+                                   "notchecked", "informational"))
+
+    @property
+    def fails(self) -> List["ComplianceRule"]:
+        """Failing rules, highest severity first."""
+        return sorted((r for r in self.rules if r.is_fail),
+                      key=lambda r: -severity_rank(r.severity))
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["score"] = round(self.score, 1)
+        d["pass_count"] = self.pass_count
+        d["fail_count"] = self.fail_count
+        d["error_count"] = self.error_count
+        d["na_count"] = self.na_count
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "ComplianceReport":
+        d = dict(d)
+        rules = [ComplianceRule.from_dict(r) for r in d.pop("rules", [])]
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        report = cls(**{k: v for k, v in d.items() if k in known})
+        report.rules = rules
+        return report
+
+
+def compliance_to_json(report: ComplianceReport, indent: int = 2) -> str:
+    return json.dumps(report.to_dict(), indent=indent, sort_keys=True)
+
+
+def compliance_from_json(text: str) -> ComplianceReport:
+    return ComplianceReport.from_dict(json.loads(text))
+
+
 def merge_findings(findings: List[Finding]) -> List[Finding]:
     """De-duplicate findings by id, merging CVE ids and references."""
     by_id: Dict[str, Finding] = {}

@@ -38,7 +38,10 @@ from urllib.parse import parse_qs
 
 from . import __version__, feeds
 from .feeds import NewsItem
-from .models import Finding, findings_from_json, severity_rank
+from .models import (
+    ComplianceReport, Finding, compliance_from_json, findings_from_json,
+    severity_rank,
+)
 
 PBKDF2_ITERS = 200_000
 SESSION_TTL = 8 * 3600           # seconds
@@ -512,7 +515,69 @@ def _news_nav(active: str) -> str:
         cls = ' style="color:#fff;font-weight:700"' if key == active else ""
         return f'<a href="{href}"{cls}>{label}</a>'
     return (f'{lk("/", "Dashboard", "dashboard")} &nbsp; '
+            f'{lk("/compliance", "Compliance", "compliance")} &nbsp; '
             f'{lk("/news", "Advisories", "news")}')
+
+
+def _score_color(score: float) -> str:
+    if score >= 90:
+        return "#0b6b3a"     # green
+    if score >= 70:
+        return "#7a5b00"     # amber
+    return "#b3001b"         # red
+
+
+def render_compliance(report: Optional[ComplianceReport], host: str,
+                      when: str) -> str:
+    """Read-only compliance benchmark view of the last saved report."""
+    if report is None:
+        body = ('<p>No compliance scan saved yet. Run '
+                '<code>vulnscan-ai scan --compliance cis-l1</code> '
+                '(or another profile) to populate this tab.</p>')
+        tiles = ""
+    else:
+        sc = _score_color(report.score)
+        tiles = (
+            f'<div class="tile"><div class="n" style="color:{sc}">'
+            f'{report.score:.0f}%</div><div class="l">score</div></div>'
+            f'<div class="tile"><div class="n" style="color:#0b6b3a">'
+            f'{report.pass_count}</div><div class="l">pass</div></div>'
+            f'<div class="tile"><div class="n" style="color:#b3001b">'
+            f'{report.fail_count}</div><div class="l">fail</div></div>')
+        if report.error_count:
+            tiles += (f'<div class="tile"><div class="n" style="color:#7a5b00">'
+                      f'{report.error_count}</div><div class="l">error</div></div>')
+        tiles += (f'<div class="tile"><div class="n" style="color:#5b6675">'
+                  f'{report.na_count}</div><div class="l">n/a</div></div>')
+        prof = html.escape(report.profile_title or report.profile)
+        rows = []
+        for r in report.fails:
+            color = _SEV_COLOR.get((r.severity or "unknown").lower(), "#5b6675")
+            fix = ('<span class="badge" style="background:#0b6b3a">auto-fix</span>'
+                   if r.fix_available else "")
+            refs = (f'<div class="meta">{html.escape(", ".join(r.references[:10]))}</div>'
+                    if r.references else "")
+            rows.append(
+                f'<div class="f" style="border-left-color:{color}">'
+                f'<h3><span class="badge" style="background:{color}">'
+                f'{html.escape(r.severity)}</span> {fix} '
+                f'{html.escape(r.title)}</h3>'
+                f'<div class="meta">{html.escape(r.rule_id)}</div>{refs}</div>')
+        fail_html = "".join(rows) or "<p>No failing rules. The host meets this profile. ✔</p>"
+        body = (f'<p class="meta">Profile: <b>{prof}</b> &middot; '
+                f'datastream {html.escape(report.datastream)}</p>{fail_html}')
+    return f"""<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>vulnscan-ai compliance — {html.escape(host)}</title><style>{_STYLE}</style></head>
+<body>
+<header><div class="wrap">{logo_svg(22)} <b>vulnscan&middot;ai</b> compliance
+  <span class=meta style="color:#9fb0c8">{html.escape(host)} &middot; {html.escape(when)} &middot; v{__version__}</span>
+  <span class=spacer></span>{_news_nav("compliance")}
+  &nbsp;<a href="/logout">Sign out</a></div></header>
+<div class="wrap">
+  <div class="tiles">{tiles}</div>
+  {body}
+</div></body></html>"""
 
 
 def render_news(items: List[NewsItem], fetched_at: str, host: str, *,
@@ -680,6 +745,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self._serve_news_json()
         if path == "/news":
             return self._serve_news()
+        if path == "/compliance":
+            return self._serve_compliance()
         if path == "/":
             return self._serve_dashboard()
         return self._text(HTTPStatusNotFound, "Not found")
@@ -735,6 +802,21 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             findings, host, when, srv.allow,
             allow_fix=bool(getattr(srv.cfg, "dashboard_allow_fix", False)),
             scan_running=srv.scan_running, scan_message=srv.scan_message))
+
+    def _load_compliance(self):
+        cfg = self._cfg()
+        try:
+            with open(cfg.compliance_path, "r", encoding="utf-8") as fh:
+                return compliance_from_json(fh.read()), \
+                    os.path.getmtime(cfg.compliance_path)
+        except (OSError, ValueError):
+            return None, 0.0
+
+    def _serve_compliance(self):
+        report, mtime = self._load_compliance()
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)) \
+            if mtime else "no compliance scan yet"
+        self._html(200, render_compliance(report, socket.gethostname(), when))
 
     def _serve_findings_json(self):
         findings, _ = self._load_findings()

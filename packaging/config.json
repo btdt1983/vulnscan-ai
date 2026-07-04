@@ -9,6 +9,8 @@
   "exploit_enrich": true,
   "patched_filter": true,
   "oval_auto_update": true,
+  "compliance_profile": "cis-l1",
+  "compliance_datastream": null,
   "oval_max_age_days": 7,
   "news_enabled": true,
   "news_sources": ["kev", "nvd", "distro"],

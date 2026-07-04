@@ -6,6 +6,8 @@
   "scanners": ["dnf"],
   "min_severity": "low",
   "enrich": true,
+  "compliance_profile": "cis-l1",
+  "compliance_datastream": null,
   "auto_approve": false,
   "dry_run": false,
   "timeout": 30,

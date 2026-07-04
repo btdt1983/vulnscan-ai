@@ -19,16 +19,16 @@ from .config import Config
 from .fips import status_line
 from .branding import print_banner
 from .models import (
-    Finding, apply_exploit_priority, apply_ignores, apply_patched_states,
-    apply_service_states, apply_vendor_states, dedup_cross_scanner,
-    diff_findings, findings_from_json, findings_to_json, merge_findings,
-    severity_rank,
+    ComplianceReport, Finding, apply_exploit_priority, apply_ignores,
+    apply_patched_states, apply_service_states, apply_vendor_states,
+    compliance_to_json, dedup_cross_scanner, diff_findings, findings_from_json,
+    findings_to_json, merge_findings, severity_rank,
 )
-from .report import write_report
+from .report import write_compliance_report, write_report
 from .scanners import (
-    SCANNERS, ExploitEnricher, NvdEnricher, PatchedStateEnricher,
-    ServiceStateEnricher, detect_distro, download_oval, is_oval_stale,
-    oval_age_days,
+    SCANNERS, ComplianceScanner, ExploitEnricher, NvdEnricher,
+    PatchedStateEnricher, ServiceStateEnricher, detect_distro, download_oval,
+    is_oval_stale, oval_age_days,
 )
 
 
@@ -299,6 +299,12 @@ def cmd_info(cfg: Config, args) -> int:
     for name, cls in SCANNERS.items():
         avail = "available" if cls(cfg).available() else "unavailable"
         print(f"  {name:<8} {avail}")
+    comp = ComplianceScanner(cfg)
+    if comp.available():
+        ds = os.path.basename(comp.datastream)
+        print(f"  compliance  available (scan --compliance; {ds})")
+    else:
+        print("  compliance  unavailable (needs oscap + scap-security-guide)")
     print("\nAI providers (configured = API key/endpoint present):")
     for name, cls in PROVIDERS.items():
         inst = cls()
@@ -309,7 +315,114 @@ def cmd_info(cfg: Config, args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# compliance benchmark
+# --------------------------------------------------------------------------- #
+def _score_color(score: float) -> str:
+    if score >= 90:
+        return _SEV_ANSI["low"]        # green
+    if score >= 70:
+        return _SEV_ANSI["moderate"]   # amber
+    return _SEV_ANSI["critical"]       # red
+
+
+def _print_compliance(report: ComplianceReport) -> None:
+    color = _use_color()
+    score = report.score
+    scored = f"{score:.1f}%"
+    if color:
+        scored = _score_color(score) + scored + _RESET
+    print(f"\nCompliance: {report.profile_title or report.profile}")
+    print(f"Datastream: {report.datastream}")
+    print(f"Score: {scored}   "
+          f"pass {report.pass_count}   fail {report.fail_count}   "
+          f"error {report.error_count}   n/a {report.na_count}")
+    fails = report.fails
+    if not fails:
+        print("\nNo failing rules. ✔")
+        return
+    print(f"\n{'SEV':<5} {'FIX':<4} RULE")
+    print("-" * 90)
+    for r in fails:
+        sev = (r.severity or "unknown").lower()
+        cell = f"{_SEV_TAG.get(sev, 'UNK'):<5}"
+        if color:
+            cell = _SEV_ANSI.get(sev, "") + cell + _RESET
+        fix = "auto" if r.fix_available else "-"
+        print(f"{cell} {fix:<4} {r.title[:78]}")
+    print("-" * 90)
+    print(f"{len(fails)} failing rule(s). "
+          f"'auto' = a remediation ships with the rule.")
+
+
+def _list_profiles(scanner: ComplianceScanner) -> int:
+    if not scanner.available():
+        _eprint("No SCAP datastream found. Install 'scap-security-guide' "
+                "(dnf install scap-security-guide) and ensure 'oscap' is present.")
+        return 2
+    profiles = scanner.list_profiles()
+    if not profiles:
+        _eprint(f"No profiles found in {scanner.datastream}.")
+        return 2
+    print(f"Profiles in {os.path.basename(scanner.datastream)}:\n")
+    for pid, title in profiles:
+        suffix = pid.rsplit("_profile_", 1)[-1]
+        print(f"  {suffix:<24} {title}")
+    print("\nUse:  vulnscan-ai scan --compliance <profile>")
+    return 0
+
+
+def cmd_compliance(cfg: Config, args) -> int:
+    """Run (or list) a compliance benchmark. Invoked from cmd_scan when
+    --compliance/--list-profiles is given; short-circuits the vuln scan."""
+    datastream = getattr(args, "compliance_datastream", None) \
+        or cfg.compliance_datastream
+    if datastream:
+        cfg.compliance_datastream = datastream
+    scanner = ComplianceScanner(cfg)
+    if getattr(args, "list_profiles", False):
+        return _list_profiles(scanner)
+    if not scanner.available():
+        _eprint("No SCAP datastream found. Install 'scap-security-guide' "
+                "(dnf install scap-security-guide) and ensure 'oscap' is present.")
+        return 2
+    requested = args.compliance or cfg.compliance_profile
+    profile_id = scanner.resolve(requested)
+    if not profile_id:
+        _eprint(f"Unknown compliance profile '{requested}'. "
+                f"Run 'vulnscan-ai scan --list-profiles' to see the options.")
+        return 2
+    title = dict(scanner.list_profiles()).get(profile_id, "")
+    print(f"Evaluating {title or profile_id} on {_hostname()} ...")
+    print("(a full XCCDF audit — this can take a few minutes)")
+    report = scanner.evaluate(profile_id, profile_title=title,
+                              hostname=_hostname(), generated=_now(),
+                              timeout=max(cfg.timeout, 1800))
+    if report is None:
+        _eprint("oscap produced no results (evaluation failed). "
+                "Try 'oscap xccdf eval' manually to see the error.")
+        return 2
+    cfg.ensure_state_dir()
+    with open(cfg.compliance_path, "w", encoding="utf-8") as fh:
+        fh.write(compliance_to_json(report))
+    os.chmod(cfg.compliance_path, 0o600)
+    _print_compliance(report)
+    print(f"\nSaved to {cfg.compliance_path}")
+    for target in (getattr(args, "pdf", None), getattr(args, "json", None),
+                   getattr(args, "sarif", None)):
+        if target:
+            out = write_compliance_report(report, target)
+            print(f"Wrote {out}")
+    # Exit 3 when the host has failing rules of at least the severity floor, so
+    # CI/timers can gate on it (mirrors scheduled --fail-on semantics).
+    return 3 if report.fail_count else 0
+
+
 def cmd_scan(cfg: Config, args) -> int:
+    # Compliance benchmark is a distinct mode; it short-circuits the vuln scan.
+    if getattr(args, "list_profiles", False) or \
+            getattr(args, "compliance", None) is not None:
+        return cmd_compliance(cfg, args)
     scanners = _select_scanners(args, cfg)
     print(f"Scanning {_hostname()} ...")
     had_prev = os.path.isfile(cfg.findings_path)
@@ -820,6 +933,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--ignore", action="append", metavar="PATTERN",
                     help="suppress findings matching id/CVE/advisory/package/"
                          "title (glob, repeatable); augments the baseline")
+    sp.add_argument("--compliance", metavar="PROFILE", nargs="?", const="",
+                    help="run a compliance benchmark instead of a vuln scan: "
+                         "cis-l1|cis-l2|stig|pci-dss|hipaa|... (or a full XCCDF "
+                         "profile id); omit the value to use the configured one")
+    sp.add_argument("--list-profiles", action="store_true",
+                    help="list the compliance profiles this host's SCAP "
+                         "datastream offers, then exit")
+    sp.add_argument("--compliance-datastream", metavar="PATH",
+                    help="override the SCAP datastream (default: auto-detect)")
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("fix", help="propose and (with approval) apply fixes")

@@ -3,7 +3,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.2.5
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -105,6 +105,21 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sat Jul 04 2026 vulnscan-ai <noreply@example.invalid> - 1:0.3.0-1
+- Compliance benchmark scanning (CIS / DISA STIG / PCI-DSS / HIPAA / ANSSI):
+  * new `scan --compliance <profile>` mode runs `oscap xccdf eval` against the
+    SCAP Security Guide and reports a compliance score plus every failing rule
+    (sorted by severity, with CCE/CIS/STIG identifiers and whether an automated
+    remediation ships). A distinct mode — not part of `--all` (XCCDF is a
+    minutes-long full-system audit).
+  * `scan --list-profiles` lists the profiles the host's datastream offers;
+    friendly aliases (cis-l1, cis-l2, stig, pci-dss, hipaa, ospp, anssi-high, …)
+    or a full XCCDF profile id both resolve.
+  * results saved to <state-dir>/compliance.json; `--pdf`/`--json`/`--sarif`
+    export them; exits 3 when any rule fails (for CI/timers).
+  * dashboard gains a read-only Compliance tab (score tile + failing rules);
+    interactive menu gains a Compliance entry; `info` shows availability.
+  * requires oscap + the scap-security-guide package.
 * Fri Jul 03 2026 vulnscan-ai <noreply@example.invalid> - 1:0.2.5-1
 - AI provider/model UX + error visibility:
   * setup now picks the cloud model from a MENU of known ids per provider (with a

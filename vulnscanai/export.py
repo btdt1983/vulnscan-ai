@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from . import __version__
-from .models import Finding
+from .models import ComplianceReport, Finding
 
 INFO_URI = "https://example.invalid/vulnscan-ai"
 
@@ -155,3 +155,62 @@ def _result_message(f: Finding) -> str:
     if f.cve_ids:
         bits.append("CVEs: " + ", ".join(f.cve_ids) + ".")
     return " ".join(bits)
+
+
+# --------------------------------------------------------------------------- #
+# compliance benchmark SARIF (one rule + one result per failing XCCDF rule)
+# --------------------------------------------------------------------------- #
+def build_compliance_sarif(report: ComplianceReport) -> Dict:
+    rules: List[Dict] = []
+    results: List[Dict] = []
+    for i, r in enumerate(report.fails):
+        level = _sarif_level(r.severity)
+        rules.append({
+            "id": r.rule_id,
+            "name": r.rule_id.rsplit("_rule_", 1)[-1],
+            "shortDescription": {"text": r.title or r.rule_id},
+            "helpUri": INFO_URI,
+            "defaultConfiguration": {"level": level},
+            "properties": {
+                "security-severity": {
+                    "critical": "9.5", "important": "7.5", "high": "7.5",
+                    "moderate": "5.0", "medium": "5.0", "low": "2.0",
+                }.get((r.severity or "").lower(), "0.0"),
+                "identifiers": r.references,
+                "remediationAvailable": r.fix_available,
+                "tags": ["compliance", report.profile],
+            },
+        })
+        results.append({
+            "ruleId": r.rule_id,
+            "ruleIndex": i,
+            "level": level,
+            "message": {"text": f"{r.title or r.rule_id} — failed "
+                                f"({report.profile_title or report.profile})."},
+            "locations": [{
+                "logicalLocations": [{"name": report.hostname or "system",
+                                      "kind": "resource"}],
+            }],
+            "partialFingerprints": {"vulnscanai/compliance/v1": r.rule_id},
+        })
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "vulnscan-ai-compliance",
+                    "version": __version__,
+                    "informationUri": INFO_URI,
+                    "rules": rules,
+                },
+            },
+            "properties": {
+                "profile": report.profile,
+                "score": round(report.score, 1),
+                "pass": report.pass_count,
+                "fail": report.fail_count,
+            },
+            "results": results,
+        }],
+    }

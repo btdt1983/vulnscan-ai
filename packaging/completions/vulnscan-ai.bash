@@ -14,9 +14,11 @@ _vulnscan_ai() {
             COMPREPLY=($(compgen -W "low moderate important critical" -- "$cur")); return;;
         --scanner)
             COMPREPLY=($(compgen -W "dnf oscap ssh systemd ports webroot container" -- "$cur")); return;;
+        --compliance)
+            COMPREPLY=($(compgen -W "cis-l1 cis-l2 cis-ws-l1 cis-ws-l2 stig stig-gui pci-dss hipaa ospp cui anssi-minimal anssi-intermediary anssi-enhanced anssi-high e8" -- "$cur")); return;;
         --source)
             COMPREPLY=($(compgen -W "kev nvd distro" -- "$cur")); return;;
-        --config|--pdf|--json|--sarif|--export-script|--export-ansible|-o|--output)
+        --config|--pdf|--json|--sarif|--compliance-datastream|--export-script|--export-ansible|-o|--output)
             COMPREPLY=($(compgen -f -- "$cur")); return;;
         --state-dir)
             COMPREPLY=($(compgen -d -- "$cur")); return;;
@@ -38,7 +40,7 @@ _vulnscan_ai() {
     fi
 
     case "$cmd" in
-        scan)      opts="--scanner --all --min-severity --no-enrich --pdf --json --sarif --ignore";;
+        scan)      opts="--scanner --all --min-severity --no-enrich --pdf --json --sarif --ignore --compliance --list-profiles --compliance-datastream";;
         fix)       opts="--scan --scanner --all --no-enrich --min-severity --yes --dry-run --pdf --export-script --export-ansible --ignore";;
         rollback)  opts="--list";;
         report)    opts="-o --output --min-severity";;

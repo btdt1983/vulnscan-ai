@@ -14,7 +14,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 |---|---|
 | [`menu`](#menu) | Interactive menu covering every command (also the default with no command) |
 | [`info`](#info) | Show host / FIPS / GPU / scanner / provider status |
-| [`scan`](#scan) | Scan for vulnerabilities; save findings; optional report/export |
+| [`scan`](#scan) | Scan for vulnerabilities; save findings; optional report/export. `--compliance` runs a CIS/STIG/PCI-DSS benchmark instead |
 | [`fix`](#fix) | Propose AI remediation and (with approval) apply it — transactional, with auto-rollback |
 | [`rollback`](#rollback) | Restore a previously-applied transactional fix from its backup |
 | [`report`](#report) | Render a report/export from the last saved scan |
@@ -157,6 +157,24 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 | `--json PATH` | Also write a JSON export. |
 | `--sarif PATH` | Also write a SARIF 2.1.0 file (GitHub code scanning, DefectDojo). |
 | `--ignore PATTERN` | Suppress findings matching id / CVE / advisory / package / title (glob, repeatable). Augments the configured baseline. |
+| `--compliance PROFILE` | Run a **compliance benchmark** instead of a vulnerability scan (see below). Omit the value to use the configured profile (`compliance_profile`). |
+| `--list-profiles` | List the compliance profiles this host's SCAP datastream offers, then exit. |
+| `--compliance-datastream PATH` | Override the SCAP datastream (default: auto-detect for this distro). |
+
+> **Compliance benchmarks (CIS / STIG / PCI-DSS / …).** `scan --compliance
+> <profile>` evaluates the host against a hardening benchmark from the SCAP
+> Security Guide (`oscap xccdf eval`) and reports a **compliance score** plus
+> every failing rule, sorted by severity, with each rule's identifiers (CCE/CIS/
+> STIG) and whether it ships an automated remediation (`FIX = auto`). It is a
+> distinct mode — it does **not** run the vulnerability scanners, and it is not
+> part of `--all` (an XCCDF audit is a minutes-long full-system evaluation).
+> Results are saved to `<state-dir>/compliance.json` and shown on the dashboard's
+> **Compliance** tab; `--pdf`/`--json` also apply (a `.sarif` path exports SARIF).
+> The command exits `3` when any rule fails (for CI/timers). Requires `oscap` and
+> the `scap-security-guide` package (`dnf install scap-security-guide`). Profile
+> aliases: `cis-l1`, `cis-l2`, `cis-ws-l1`, `stig`, `pci-dss`, `hipaa`, `ospp`,
+> `anssi-high`, … (or pass a full XCCDF profile id). Run `--list-profiles` to see
+> exactly what your datastream offers.
 
 > **Reducing false positives.** Several measures run automatically: the `oscap`
 > scanner only reports real *patch* advisories (inventory/compliance definitions
@@ -199,6 +217,15 @@ vulnscan-ai scan --scanner oscap --min-severity important --pdf oscap.pdf
 
 # Point at a different state dir (keeps findings separate)
 vulnscan-ai --state-dir /srv/scans/web01 scan --min-severity moderate
+
+# List the compliance profiles this host offers
+vulnscan-ai scan --list-profiles
+
+# Run the CIS Level 1 benchmark, write a PDF for auditors
+vulnscan-ai scan --compliance cis-l1 --pdf cis-l1.pdf
+
+# DISA STIG evaluation, export SARIF for the pipeline
+vulnscan-ai scan --compliance stig --sarif stig.sarif
 ```
 
 > Tip: run [`update-oval`](#update-oval) once before using `--scanner oscap`.

@@ -507,10 +507,32 @@ def _b_update_oval(cfg) -> Optional[List[str]]:
     return ["update-oval"]
 
 
+def _b_compliance(cfg) -> Optional[List[str]]:
+    default = getattr(cfg, "compliance_profile", "cis-l1")
+    choice = _choose("Compliance benchmark", [
+        (f"CIS Level 1 — Server (cis-l1){' [default]' if default == 'cis-l1' else ''}", "cis-l1"),
+        ("CIS Level 2 — Server (cis-l2)", "cis-l2"),
+        ("DISA STIG (stig)", "stig"),
+        ("PCI-DSS (pci-dss)", "pci-dss"),
+        ("HIPAA (hipaa)", "hipaa"),
+        ("List the profiles this host offers…", "list"),
+    ])
+    if choice is _CANCEL:
+        return None
+    if choice == "list":
+        return ["scan", "--list-profiles"]
+    argv = ["scan", "--compliance", choice]
+    pdf = _ask("Also write a PDF report to (blank = skip)", "")
+    if pdf:
+        argv += ["--pdf", pdf]
+    return argv
+
+
 # Top-level menu entries: (label, key). ``info``/``providers``/``setup`` take no
 # options, so they build a trivial argv inline.
 _TOP: List[Tuple[str, str]] = [
     ("Scan for vulnerabilities", "scan"),
+    ("Compliance benchmark (CIS / STIG / PCI-DSS)", "compliance"),
     ("Fix findings (AI-assisted, approval-gated)", "fix"),
     ("Roll back an applied fix", "rollback"),
     ("Report from the last scan", "report"),
@@ -525,6 +547,7 @@ _TOP: List[Tuple[str, str]] = [
 
 _BUILDERS = {
     "scan": _b_scan,
+    "compliance": _b_compliance,
     "fix": _b_fix,
     "rollback": _b_rollback,
     "report": _b_report,

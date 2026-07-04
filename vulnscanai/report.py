@@ -22,7 +22,7 @@ from typing import Dict, List, Tuple
 
 from . import export
 from .fips import status_line
-from .models import Finding, severity_rank
+from .models import ComplianceReport, Finding, severity_rank
 from .pdfwriter import PdfBuilder
 
 try:  # reportlab is optional
@@ -170,6 +170,78 @@ def write_report(findings: List[Finding], path: str, hostname: str,
         _render_html(blocks, path)
         return path
     # .pdf (or anything else) -> a PDF
+    if not low.endswith(".pdf"):
+        path = path + ".pdf"
+    if _HAVE_REPORTLAB:
+        _render_reportlab(blocks, path)
+    else:
+        _render_native_pdf(blocks, path)
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# compliance benchmark report (reuses the block renderers above)
+# --------------------------------------------------------------------------- #
+def build_compliance_blocks(report: ComplianceReport) -> List[Dict]:
+    """Turn a ComplianceReport into renderer-agnostic blocks (same block types
+    the vulnerability report uses, so all three renderers handle it as-is)."""
+    blocks: List[Dict] = []
+    blocks.append({"t": "h1", "text": "Compliance Benchmark Report"})
+    if report.hostname:
+        blocks.append({"t": "meta", "text": f"Host: {report.hostname}"})
+    if report.generated:
+        blocks.append({"t": "meta", "text": f"Generated: {report.generated}"})
+    blocks.append({"t": "meta", "text": status_line()})
+    blocks.append({"t": "meta",
+                   "text": f"Profile: {report.profile_title or report.profile} "
+                           f"({report.profile})"})
+    blocks.append({"t": "meta", "text": f"Datastream: {report.datastream}"})
+    blocks.append({"t": "note", "text": (
+        f"Score: {report.score:.1f}%   —   pass {report.pass_count}   "
+        f"fail {report.fail_count}   error {report.error_count}   "
+        f"n/a {report.na_count}")})
+    blocks.append({"t": "note", "text": (
+        "Failing rules below come from the SCAP Security Guide benchmark. "
+        "Rules marked 'remediation available' ship an automated fix.")})
+    blocks.append({"t": "spacer", "h": 6})
+
+    fails = report.fails
+    if not fails:
+        blocks.append({"t": "para", "text": "No failing rules. The host meets "
+                                            "every selected rule in this profile."})
+        return blocks
+    for r in fails:
+        hexc = _SEV_COLOR.get((r.severity or "unknown").lower(), "#000000")
+        blocks.append({"t": "h2", "text": f"[{r.severity.upper()}] {r.title}",
+                       "hex": hexc})
+        blocks.append({"t": "small", "text": f"Rule: {r.rule_id}"})
+        if r.references:
+            blocks.append({"t": "small",
+                           "text": "Identifiers: " + ", ".join(r.references[:12])})
+        blocks.append({"t": "small", "text": (
+            "Remediation available (ships with the benchmark)"
+            if r.fix_available else "No automated remediation; fix manually")})
+        blocks.append({"t": "spacer", "h": 6})
+    return blocks
+
+
+def write_compliance_report(report: ComplianceReport, path: str) -> str:
+    """Render a ComplianceReport to `path`; format chosen by file extension.
+
+    Supported: .sarif / .sarif.json (SARIF 2.1.0), .json (report document),
+    .html (HTML), anything else -> PDF.
+    """
+    low = path.lower()
+    if low.endswith(".sarif") or low.endswith(".sarif.json"):
+        _write_data(export.build_compliance_sarif(report), path)
+        return path
+    if low.endswith(".json"):
+        _write_data(report.to_dict(), path)
+        return path
+    blocks = build_compliance_blocks(report)
+    if low.endswith(".html"):
+        _render_html(blocks, path)
+        return path
     if not low.endswith(".pdf"):
         path = path + ".pdf"
     if _HAVE_REPORTLAB:

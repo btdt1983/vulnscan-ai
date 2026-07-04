@@ -47,7 +47,10 @@ _vulnscan-ai() {
             '--pdf[write PDF report]:file:_files' \
             '--json[write JSON export]:file:_files' \
             '--sarif[write SARIF 2.1.0]:file:_files' \
-            '*--ignore[suppress matching findings]:pattern:' ;;
+            '*--ignore[suppress matching findings]:pattern:' \
+            '--compliance[run a compliance benchmark instead of a vuln scan]:profile:(cis-l1 cis-l2 cis-ws-l1 cis-ws-l2 stig stig-gui pci-dss hipaa ospp cui anssi-minimal anssi-intermediary anssi-enhanced anssi-high e8)' \
+            '--list-profiles[list compliance profiles this host offers]' \
+            '--compliance-datastream[override the SCAP datastream]:file:_files' ;;
         fix)
           _arguments \
             '--scan[scan first]' \

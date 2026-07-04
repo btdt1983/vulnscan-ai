@@ -2167,5 +2167,245 @@ class TestMenu(unittest.TestCase):
         self.assertIn("vulnscan-ai", buf.getvalue())
 
 
+# --------------------------------------------------------------------------- #
+# compliance benchmark (XCCDF) scanner
+# --------------------------------------------------------------------------- #
+_XCCDF_NS = "http://checklists.nist.gov/xccdf/1.2"
+
+_DS_RULES = f"""<?xml version="1.0"?>
+<Benchmark xmlns="{_XCCDF_NS}" id="xccdf_org.ssgproject.content_benchmark_TEST">
+  <Rule id="xccdf_org.ssgproject.content_rule_sshd_disable_root_login" severity="high">
+    <title>Disable SSH Root Login</title>
+    <ident system="https://nvd.nist.gov/cce/index.cfm">CCE-1001-1</ident>
+    <fix system="urn:xccdf:fix:script:sh">sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config</fix>
+  </Rule>
+  <Rule id="xccdf_org.ssgproject.content_rule_no_empty_passwords" severity="medium">
+    <title>Prevent Empty Passwords</title>
+    <ident system="https://nvd.nist.gov/cce/index.cfm">CCE-1002-2</ident>
+  </Rule>
+  <Rule id="xccdf_org.ssgproject.content_rule_package_aide_installed" severity="low">
+    <title>Install AIDE</title>
+    <fix system="urn:xccdf:fix:script:sh">dnf install -y aide</fix>
+  </Rule>
+</Benchmark>
+"""
+
+_XCCDF_RESULTS = f"""<?xml version="1.0"?>
+<Benchmark xmlns="{_XCCDF_NS}" id="b">
+  <TestResult id="xccdf_org.open-scap_testresult_test" start-time="2026-07-04T10:00:00">
+    <rule-result idref="xccdf_org.ssgproject.content_rule_sshd_disable_root_login" severity="high">
+      <result>fail</result>
+    </rule-result>
+    <rule-result idref="xccdf_org.ssgproject.content_rule_no_empty_passwords" severity="medium">
+      <result>pass</result>
+    </rule-result>
+    <rule-result idref="xccdf_org.ssgproject.content_rule_package_aide_installed" severity="low">
+      <result>fail</result>
+    </rule-result>
+    <rule-result idref="xccdf_org.ssgproject.content_rule_orphan_no_meta" severity="low">
+      <result>notapplicable</result>
+    </rule-result>
+    <score system="urn:xccdf:scoring:default" maximum="100.000000">33.333332</score>
+  </TestResult>
+</Benchmark>
+"""
+
+_OSCAP_PROFILES = (
+    "xccdf_org.ssgproject.content_profile_cis:CIS AlmaLinux OS 9 Level 2 - Server\n"
+    "xccdf_org.ssgproject.content_profile_cis_server_l1:CIS Level 1 - Server\n"
+    "xccdf_org.ssgproject.content_profile_stig:DISA STIG for AlmaLinux OS 9\n"
+    "xccdf_org.ssgproject.content_profile_pci-dss:PCI-DSS v4.0.1\n"
+    "\n"                        # blank line tolerated
+    "Some other oscap noise line without a colon-profile\n"
+)
+
+
+class TestComplianceScanner(unittest.TestCase):
+    def _write(self, text, suffix=".xml"):
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        return path
+
+    def test_parse_profiles(self):
+        from vulnscanai.scanners.compliance import parse_profiles
+        got = parse_profiles(_OSCAP_PROFILES)
+        ids = [pid for pid, _ in got]
+        self.assertIn("xccdf_org.ssgproject.content_profile_stig", ids)
+        self.assertEqual(len(got), 4)  # noise/blank lines dropped
+        title = dict(got)["xccdf_org.ssgproject.content_profile_cis"]
+        self.assertIn("Level 2", title)
+
+    def test_resolve_profile_alias_suffix_and_id(self):
+        from vulnscanai.scanners.compliance import parse_profiles, resolve_profile
+        avail = parse_profiles(_OSCAP_PROFILES)
+        # friendly alias
+        self.assertEqual(resolve_profile("cis-l1", avail),
+                         "xccdf_org.ssgproject.content_profile_cis_server_l1")
+        self.assertEqual(resolve_profile("stig", avail),
+                         "xccdf_org.ssgproject.content_profile_stig")
+        self.assertEqual(resolve_profile("pci", avail),
+                         "xccdf_org.ssgproject.content_profile_pci-dss")
+        # bare suffix
+        self.assertEqual(resolve_profile("cis_server_l1", avail),
+                         "xccdf_org.ssgproject.content_profile_cis_server_l1")
+        # full id passthrough
+        full = "xccdf_org.ssgproject.content_profile_stig"
+        self.assertEqual(resolve_profile(full, avail), full)
+        # unknown
+        self.assertIsNone(resolve_profile("nonsense", avail))
+        self.assertIsNone(resolve_profile("", avail))
+
+    def test_candidate_datastreams(self):
+        from vulnscanai.scanners.compliance import candidate_datastreams
+        alma = candidate_datastreams("almalinux", "9")
+        self.assertEqual(alma[0], "ssg-almalinux9-ds.xml")
+        self.assertIn("ssg-rhel9-ds.xml", alma)   # RHEL-like fallback
+        rhel = candidate_datastreams("rhel", "9")
+        self.assertEqual(rhel[0], "ssg-rhel9-ds.xml")
+
+    def test_parse_xccdf_rules(self):
+        from vulnscanai.scanners.compliance import parse_xccdf_rules
+        path = self._write(_DS_RULES)
+        rules = parse_xccdf_rules(path)
+        rid = "xccdf_org.ssgproject.content_rule_sshd_disable_root_login"
+        self.assertIn(rid, rules)
+        self.assertEqual(rules[rid]["title"], "Disable SSH Root Login")
+        self.assertEqual(rules[rid]["severity"], "important")  # high -> important
+        self.assertTrue(rules[rid]["fix_available"])
+        self.assertIn("CCE-1001-1", rules[rid]["references"])
+        # rule without a fix
+        nef = "xccdf_org.ssgproject.content_rule_no_empty_passwords"
+        self.assertFalse(rules[nef]["fix_available"])
+        self.assertEqual(rules[nef]["severity"], "moderate")   # medium -> moderate
+
+    def test_parse_xccdf_results(self):
+        from vulnscanai.scanners.compliance import parse_xccdf_results
+        path = self._write(_XCCDF_RESULTS)
+        score, results, sevs = parse_xccdf_results(path)
+        self.assertAlmostEqual(score, 33.333332, places=3)
+        rid = "xccdf_org.ssgproject.content_rule_sshd_disable_root_login"
+        self.assertEqual(results[rid], "fail")
+        self.assertEqual(sevs[rid], "high")
+        self.assertEqual(len(results), 4)
+
+    def test_build_report_counts_and_sorting(self):
+        from vulnscanai.scanners.compliance import (
+            build_report, parse_xccdf_results, parse_xccdf_rules,
+        )
+        meta = parse_xccdf_rules(self._write(_DS_RULES))
+        score, results, sevs = parse_xccdf_results(self._write(_XCCDF_RESULTS))
+        report_obj = build_report(
+            "xccdf_org.ssgproject.content_profile_cis", "CIS L2",
+            "/path/ssg-almalinux9-ds.xml", meta, score, results, sevs,
+            hostname="host1", generated="2026-07-04")
+        self.assertEqual(report_obj.datastream, "ssg-almalinux9-ds.xml")
+        self.assertEqual(report_obj.fail_count, 2)
+        self.assertEqual(report_obj.pass_count, 1)
+        self.assertEqual(report_obj.na_count, 1)
+        # fails sorted highest severity first (important before low)
+        fails = report_obj.fails
+        self.assertEqual(fails[0].severity, "important")
+        self.assertEqual(fails[-1].severity, "low")
+        # orphan result (no benchmark metadata) still gets a readable title
+        rid = "xccdf_org.ssgproject.content_rule_orphan_no_meta"
+        orphan = next(r for r in report_obj.rules if r.rule_id == rid)
+        self.assertEqual(orphan.title, "orphan no meta")
+
+    def test_build_report_excludes_notselected(self):
+        from vulnscanai.scanners.compliance import build_report
+        # notselected rules are not part of the profile and must not be stored.
+        results = {"r_fail": "fail", "r_pass": "pass", "r_off": "notselected"}
+        rep = build_report("p", "P", "ds.xml", {}, 50.0, results, {})
+        ids = {r.rule_id for r in rep.rules}
+        self.assertEqual(ids, {"r_fail", "r_pass"})
+        self.assertEqual(rep.fail_count, 1)
+
+    def test_report_roundtrip(self):
+        from vulnscanai.models import (
+            ComplianceReport, ComplianceRule, compliance_from_json,
+            compliance_to_json,
+        )
+        rep = ComplianceReport(
+            profile="p", profile_title="P", datastream="ds.xml", score=87.5,
+            rules=[ComplianceRule(rule_id="r1", title="R1", result="fail",
+                                  severity="important", fix_available=True,
+                                  references=["CCE-1"])],
+            hostname="h", generated="g")
+        back = compliance_from_json(compliance_to_json(rep))
+        self.assertEqual(back.profile, "p")
+        self.assertEqual(back.score, 87.5)
+        self.assertEqual(len(back.rules), 1)
+        self.assertTrue(back.rules[0].fix_available)
+        self.assertEqual(back.fail_count, 1)
+
+    def test_write_compliance_report_formats(self):
+        from vulnscanai.models import ComplianceReport, ComplianceRule
+        from vulnscanai.report import write_compliance_report
+        rep = ComplianceReport(
+            profile="xccdf_org.ssgproject.content_profile_cis",
+            profile_title="CIS L2", datastream="ssg-almalinux9-ds.xml",
+            score=42.0, hostname="host1", generated="2026-07-04",
+            rules=[ComplianceRule(
+                rule_id="xccdf_org.ssgproject.content_rule_sshd_disable_root_login",
+                title="Disable SSH Root Login", result="fail",
+                severity="important", fix_available=True,
+                references=["CCE-1001-1"])])
+        tmp = tempfile.mkdtemp()
+        # JSON
+        jp = os.path.join(tmp, "c.json")
+        write_compliance_report(rep, jp)
+        with open(jp) as fh:
+            doc = json.load(fh)
+        self.assertEqual(doc["fail_count"], 1)
+        self.assertEqual(doc["score"], 42.0)
+        # SARIF
+        sp = os.path.join(tmp, "c.sarif")
+        write_compliance_report(rep, sp)
+        with open(sp) as fh:
+            sarif = json.load(fh)
+        self.assertEqual(sarif["version"], "2.1.0")
+        self.assertEqual(len(sarif["runs"][0]["results"]), 1)
+        self.assertEqual(sarif["runs"][0]["results"][0]["level"], "error")
+        # HTML
+        hp = os.path.join(tmp, "c.html")
+        write_compliance_report(rep, hp)
+        with open(hp) as fh:
+            htext = fh.read()
+        self.assertIn("Compliance Benchmark Report", htext)
+        self.assertIn("Disable SSH Root Login", htext)
+        for p in (jp, sp, hp):
+            os.remove(p)
+        os.rmdir(tmp)
+
+    def test_severity_alias_normalisation(self):
+        from vulnscanai.models import XCCDF_SEVERITY_ALIAS
+        self.assertEqual(XCCDF_SEVERITY_ALIAS["high"], "important")
+        self.assertEqual(XCCDF_SEVERITY_ALIAS["medium"], "moderate")
+        self.assertEqual(XCCDF_SEVERITY_ALIAS.get("", "unknown"), "unknown")
+
+    def test_dashboard_compliance_render(self):
+        from vulnscanai.models import ComplianceReport, ComplianceRule
+        rep = ComplianceReport(
+            profile="p", profile_title="CIS L1", datastream="ssg-almalinux9-ds.xml",
+            score=63.0, hostname="h", generated="g",
+            rules=[
+                ComplianceRule(rule_id="r_fail", title="Disable Root SSH",
+                               result="fail", severity="important",
+                               fix_available=True, references=["CCE-9"]),
+                ComplianceRule(rule_id="r_pass", title="ok", result="pass",
+                               severity="low"),
+            ])
+        html_out = dashboard.render_compliance(rep, "h", "2026-07-04 12:00")
+        self.assertIn("63%", html_out)
+        self.assertIn("CIS L1", html_out)
+        self.assertIn("Disable Root SSH", html_out)
+        self.assertIn("auto-fix", html_out)
+        # empty state
+        empty = dashboard.render_compliance(None, "h", "no scan")
+        self.assertIn("No compliance scan saved yet", empty)
+
+
 if __name__ == "__main__":
     unittest.main()

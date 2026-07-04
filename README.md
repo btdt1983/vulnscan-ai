@@ -29,6 +29,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
 | Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container` |
 | Prioritisation | **CISA KEV** (actively exploited) + **EPSS** exploit-probability on every finding |
+| Compliance | **CIS / STIG / PCI-DSS / HIPAA** benchmarks via OpenSCAP XCCDF (`scan --compliance`): score + failing rules + dashboard tab |
 | Advisories | `news` command + dashboard tab: CISA KEV, NVD, distro errata (cached, offline-friendly) |
 | Fix mode | **Suggest + approve** by default (safest for prod/FIPS) |
 | AI backend | **Claude** default; pluggable adapters for the rest |
@@ -215,6 +216,10 @@ vulnscan-ai scan --scanner container
 
 # Run every available scanner at once
 vulnscan-ai scan --all
+
+# Compliance benchmark (CIS / STIG / PCI-DSS / …) — score + failing rules
+vulnscan-ai scan --list-profiles              # what this host offers
+vulnscan-ai scan --compliance cis-l1 --pdf cis-l1.pdf
 ```
 
 The `systemd` scanner is conservative by default (only `UNSAFE`, enabled
