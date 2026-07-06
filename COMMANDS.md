@@ -239,19 +239,22 @@ Ask the AI provider to propose remediation for saved (or freshly scanned)
 findings, then apply with approval. Proposed commands are screened against a
 safety deny-list; nothing runs without confirmation unless `--yes`.
 
-Commands run **without a shell** (no injection surface), so a step that needs a
-shell — a redirect, pipe, `&&` chain or `$( )` substitution, e.g. writing a
-systemd drop-in with `echo … > file` — is **blocked** rather than silently doing
-nothing. Export such a fix with `--export-script` / `--export-ansible` and run
-that in a real shell instead.
+Commands run **without a shell** (no injection surface). Creating or replacing a
+file (a systemd drop-in, a new config) is done **structurally**, not with a shell
+redirect: the plan carries the file path + content and `fix` writes it safely and
+snapshots it for rollback. A command that instead relies on shell features
+(a redirect, pipe, `&&` chain or `$( )`) is **blocked** rather than silently
+doing nothing — export the fix with `--export-script` / `--export-ansible` to run
+it in a real shell.
 
 **Transactional fixes.** When a plan touches a config file or service (it
-declares `backup_paths`/`service`/`validate_cmd`), `fix` runs it transactionally:
-it snapshots the file(s), applies the change, **validates the config before
-restarting** (e.g. `sshd -t`), reloads the service and checks it stays active —
-and **automatically restores the backup if any step fails** (e.g. an sshd edit
-that would lock you out). Backups live under `<state-dir>/backups/<id>/`; undo a
-successful fix later with [`rollback`](#rollback).
+declares `backup_paths`/`write_files`/`service`/`validate_cmd`), `fix` runs it
+transactionally: it snapshots the file(s), applies the change (editing and/or
+writing files), **validates the config before restarting** (e.g. `sshd -t`,
+`systemd-analyze verify`), reloads the service and checks it stays active — and
+**automatically restores the backup if any step fails** (a restored file, or a
+newly-created one removed). Backups live under `<state-dir>/backups/<id>/`; undo
+a successful fix later with [`rollback`](#rollback).
 
 **Live progress.** While a fix is applied, each step is streamed as it runs —
 the backup, every command, the validate step, the service reload and health

@@ -12,13 +12,37 @@ JSON (which is valid YAML) so we keep the project's stdlib-only footprint.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 from typing import List
 
 from .models import Finding
 
 
 def _fix_findings(findings: List[Finding]) -> List[Finding]:
-    return [f for f in findings if f.remediation and f.remediation.commands]
+    return [f for f in findings if f.remediation
+            and (f.remediation.commands or f.remediation.write_files)]
+
+
+def _backup_set(rem) -> List[str]:
+    """backup_paths plus any file the fix writes, de-duplicated (order kept)."""
+    return list(dict.fromkeys(list(rem.backup_paths)
+                              + [wf["path"] for wf in rem.write_files]))
+
+
+def _bash_write_lines(wf: dict, indent: str) -> List[str]:
+    """Render one write_files entry as a heredoc (works in a real shell)."""
+    path, mode = wf["path"], wf.get("mode", "0644")
+    lines: List[str] = []
+    parent = os.path.dirname(path)
+    if parent:
+        lines.append(f"{indent}mkdir -p {shlex.quote(parent)}")
+    # Heredoc body + terminator must sit at column 0, so they are not indented.
+    lines.append(f"{indent}cat > {shlex.quote(path)} <<'VULNSCANAI_EOF'")
+    lines.append(wf["content"].rstrip("\n"))
+    lines.append("VULNSCANAI_EOF")
+    lines.append(f"{indent}chmod {mode} {shlex.quote(path)}")
+    return lines
 
 
 def to_bash_script(findings: List[Finding]) -> str:
@@ -30,10 +54,12 @@ def to_bash_script(findings: List[Finding]) -> str:
         "",
         'TS="$(date +%Y%m%d-%H%M%S)"',
         'BACKUP_ROOT="/var/backups/vulnscan-ai/$TS"',
+        # A file the fix *creates* does not exist at backup time, so these must
+        # never return non-zero (they run under `set -e` + an ERR trap).
         "backup() { for f in \"$@\"; do [ -f \"$f\" ] && install -D \"$f\" "
-        "\"$BACKUP_ROOT$f\"; done; }",
-        "restore() { for f in \"$@\"; do [ -f \"$BACKUP_ROOT$f\" ] && "
-        "cp -a \"$BACKUP_ROOT$f\" \"$f\"; done; }",
+        "\"$BACKUP_ROOT$f\" || true; done; return 0; }",
+        "restore() { for f in \"$@\"; do if [ -f \"$BACKUP_ROOT$f\" ]; then "
+        "cp -a \"$BACKUP_ROOT$f\" \"$f\"; else rm -f \"$f\"; fi; done; return 0; }",
         "",
     ]
     for f in _fix_findings(findings):
@@ -43,9 +69,11 @@ def to_bash_script(findings: List[Finding]) -> str:
         if rem.summary:
             out.append(f"# {rem.summary}")
         out.append(f"# risk={rem.risk} confidence={rem.confidence:.0%}")
-        transactional = bool(rem.backup_paths or rem.service or rem.validate_cmd)
+        transactional = bool(rem.backup_paths or rem.service or rem.validate_cmd
+                             or rem.write_files)
         if transactional:
-            paths = " ".join(rem.backup_paths)
+            backup_paths = _backup_set(rem)
+            paths = " ".join(shlex.quote(p) for p in backup_paths)
             svc = rem.service or ""
             mode = rem.restart_mode if rem.restart_mode in ("reload", "restart") else ""
             reload_cmd = f"systemctl {mode} {svc}" if (svc and mode) else "true"
@@ -57,6 +85,8 @@ def to_bash_script(findings: List[Finding]) -> str:
             trap_reload = f"{reload_cmd} || true; " if (svc and mode) else ""
             out.append(f"  trap 'echo \"FAILED — rolling back\"; {trap_restore}"
                        f"{trap_reload}exit 1' ERR")
+            for wf in rem.write_files:            # write files before commands
+                out.extend(_bash_write_lines(wf, "  "))
             for c in rem.commands:
                 out.append(f"  {c}")
             if rem.validate_cmd:
@@ -93,13 +123,22 @@ def to_ansible_playbook(findings: List[Finding]) -> str:
                         "name": rem.service, "state": f"{rem.restart_mode}ed",
                     },
                 })
-        for path in rem.backup_paths:
+        for path in _backup_set(rem):
             tasks.append({
                 "name": f"[{title}] backup {path}",
                 "ansible.builtin.copy": {
                     "src": path, "dest": path, "remote_src": True, "backup": True,
                 },
+                "ignore_errors": True,     # the file may not exist yet (created below)
             })
+        for wf in rem.write_files:
+            copy = {"dest": wf["path"], "content": wf["content"],
+                    "mode": wf.get("mode", "0644")}
+            task = {"name": f"[{title}] write {wf['path']}",
+                    "ansible.builtin.copy": copy}
+            if notify:
+                task["notify"] = notify
+            tasks.append(task)
         for i, cmd in enumerate(rem.commands, 1):
             task = {
                 "name": f"[{title}] step {i}",

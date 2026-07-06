@@ -313,10 +313,10 @@ When a fix touches a **config file or service** (e.g. an sshd hardening finding)
 `fix` applies it transactionally instead of blindly running commands:
 
 1. **Backup** the affected file(s) under `<state-dir>/backups/<id>/`.
-2. **Apply** the change.
-3. **Validate before restart** — e.g. `sshd -t` — so a broken config never reaches a restart.
+2. **Apply** the change — editing files (`sed`) and/or **writing new files** (e.g. a systemd drop-in) structurally, without a shell.
+3. **Validate before restart** — e.g. `sshd -t`, `systemd-analyze verify` — so a broken config never reaches a restart.
 4. **Reload** the service (preferring `reload` over `restart`) and confirm it stays active.
-5. **Auto-rollback** — if *any* step fails, the backup is restored and the service brought back, so a bad sshd edit can't lock you out.
+5. **Auto-rollback** — if *any* step fails, the backup is restored (a created file is removed) and the service brought back, so a bad sshd edit can't lock you out.
 
 Every step is **streamed live** as it runs — backup, each command, the validate
 step, the reload/health check (and any rollback) — along with the command's own

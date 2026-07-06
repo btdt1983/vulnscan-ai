@@ -292,6 +292,66 @@ class TestTransactionalApply(unittest.TestCase):
             self.assertEqual(f.remediation.apply_results[0]["status"], "blocked")
             self.assertEqual(open(target).read().strip(), "ORIGINAL")
 
+    def test_write_files_creates_and_applies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dropin = os.path.join(tmp, "svc.d", "10-hardening.conf")
+            f = _finding(source="systemd", package=None, cve_ids=[], title="harden")
+            f.remediation = Remediation(
+                write_files=[{"path": dropin,
+                              "content": "[Service]\nProtectSystem=strict\n"}],
+                validate_cmd="true")
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertTrue(ok)
+            self.assertTrue(f.remediation.applied)
+            self.assertTrue(os.path.isfile(dropin))
+            self.assertIn("ProtectSystem=strict", open(dropin).read())
+
+    def test_write_files_rollback_removes_created_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dropin = os.path.join(tmp, "svc.d", "10.conf")
+            f = _finding(source="systemd", package=None, cve_ids=[], title="h")
+            f.remediation = Remediation(
+                write_files=[{"path": dropin, "content": "[Service]\nBad=1\n"}],
+                validate_cmd="false")           # forces rollback
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertFalse(ok)
+            self.assertTrue(f.remediation.rolled_back)
+            self.assertFalse(os.path.exists(dropin))   # created file removed
+
+    def test_write_files_rollback_restores_overwritten_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "existing.conf")
+            open(target, "w").write("ORIGINAL\n")
+            f = _finding(source="ssh", package=None, cve_ids=[], title="replace")
+            f.remediation = Remediation(
+                write_files=[{"path": target, "content": "REPLACED\n"}],
+                validate_cmd="false")           # forces rollback
+            apply(f, dry_run=False, state_dir=tmp)
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+
+    def test_write_files_dangerous_path_blocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = _finding(source="systemd", package=None, cve_ids=[], title="evil")
+            f.remediation = Remediation(
+                write_files=[{"path": "/etc/shadow", "content": "x"}])
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertFalse(ok)
+            self.assertEqual(f.remediation.apply_results[0]["status"], "blocked")
+            self.assertFalse(f.remediation.applied)
+
+    def test_write_files_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dropin = os.path.join(tmp, "svc.d", "10.conf")
+            f = _finding(source="systemd", package=None, cve_ids=[], title="h")
+            f.remediation = Remediation(
+                write_files=[{"path": dropin, "content": "[Service]\n"}],
+                validate_cmd="true", service="x", restart_mode="restart")
+            ok = apply(f, dry_run=True, state_dir=tmp)
+            self.assertTrue(ok)
+            self.assertFalse(os.path.exists(dropin))
+            self.assertEqual({r["status"] for r in f.remediation.apply_results},
+                             {"dry-run"})
+
     def test_manual_restore_reports_failure_truthfully(self):
         # restore_backup must NOT claim success when the backup is unrestorable
         # (missing manifest) — otherwise the CLI prints "complete" and the audit
@@ -815,6 +875,51 @@ class TestFixExport(unittest.TestCase):
         self.assertTrue(data[0]["become"])
         self.assertEqual(data[0]["handlers"][0]["name"], "reload sshd")
         self.assertTrue(any("validate" in t["name"] for t in data[0]["tasks"]))
+
+    def _write_finding(self, tmp):
+        dropin = os.path.join(tmp, "svc.d", "10.conf")
+        f = _finding(source="systemd", package=None, cve_ids=[], title="harden")
+        f.remediation = Remediation(
+            summary="drop-in",
+            write_files=[{"path": dropin,
+                          "content": "[Service]\nProtectSystem=strict\n",
+                          "mode": "0644"}],
+            commands=["true"], validate_cmd="true")
+        return f, dropin
+
+    def test_bash_write_files_runs_and_creates_file(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            f, dropin = self._write_finding(tmp)
+            script = export_fix.to_bash_script([f])
+            self.assertIn("cat >", script)
+            self.assertIn("VULNSCANAI_EOF", script)
+            sp = os.path.join(tmp, "fix.sh")
+            open(sp, "w").write(script)
+            r = subprocess.run(["bash", sp], capture_output=True, text=True)  # nosec B603 B607
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(os.path.isfile(dropin))
+            self.assertIn("ProtectSystem=strict", open(dropin).read())
+
+    def test_bash_write_files_rollback_removes_created_file(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            f, dropin = self._write_finding(tmp)
+            f.remediation.validate_cmd = "false"   # trip the ERR trap -> rollback
+            sp = os.path.join(tmp, "fix.sh")
+            open(sp, "w").write(export_fix.to_bash_script([f]))
+            subprocess.run(["bash", sp], capture_output=True, text=True)  # nosec B603 B607
+            self.assertFalse(os.path.exists(dropin))   # created file removed
+
+    def test_ansible_write_files_copy_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f, dropin = self._write_finding(tmp)
+            data = json.loads(
+                export_fix.to_ansible_playbook([f]).split("\n", 1)[1])
+            copy = [t for t in data[0]["tasks"]
+                    if t.get("ansible.builtin.copy", {}).get("content")]
+            self.assertTrue(copy)
+            self.assertEqual(copy[0]["ansible.builtin.copy"]["dest"], dropin)
 
 
 class TestPdf(unittest.TestCase):
@@ -1625,6 +1730,35 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertIsNone(rem.service)
         self.assertEqual(rem.restart_mode, "none")
         self.assertEqual(rem.commands, ["dnf update -y python3-urllib3"])
+
+    def test_write_files_parsed_for_config_finding(self):
+        rem = self._propose(
+            '{"summary":"harden","write_files":[{"path":"/etc/systemd/system/'
+            'x.d/10.conf","content":"[Service]\\nProtectSystem=strict\\n",'
+            '"mode":"0644"}],"service":"x","restart_mode":"restart"}',
+            source="systemd", package=None, cve_ids=[], title="harden x")
+        self.assertEqual(len(rem.write_files), 1)
+        self.assertEqual(rem.write_files[0]["path"],
+                         "/etc/systemd/system/x.d/10.conf")
+        self.assertIn("ProtectSystem=strict", rem.write_files[0]["content"])
+        self.assertEqual(rem.write_files[0]["mode"], "0644")
+
+    def test_write_files_stripped_for_package_finding(self):
+        rem = self._propose(
+            '{"summary":"x","commands":["dnf update -y bash"],'
+            '"write_files":[{"path":"/etc/evil.conf","content":"pwned"}]}',
+            source="dnf", package="bash", title="bash")
+        self.assertEqual(rem.write_files, [])   # hallucinated write dropped
+
+    def test_write_files_drops_bad_entries(self):
+        rem = self._propose(
+            '{"summary":"x","write_files":['
+            '{"path":"relative/path","content":"a"},'          # not absolute
+            '{"path":"/etc/ok.conf","content":"<full content>"},'  # placeholder
+            '{"path":"/etc/good.conf","content":"real"},'
+            '"notadict",{"path":"/etc/nocontent.conf"}]}',     # missing content
+            source="systemd", package=None, cve_ids=[], title="cfg")
+        self.assertEqual([w["path"] for w in rem.write_files], ["/etc/good.conf"])
 
     def test_advisory_rewritten_from_finding(self):
         rem = self._propose(

@@ -50,6 +50,12 @@ class Remediation:
     validate_cmd: Optional[str] = None     # config check run BEFORE (re)start
     restart_mode: str = "none"             # reload | restart | none
     rollback_commands: List[str] = field(default_factory=list)
+    # Files the fix creates/replaces in full, written by the transactional engine
+    # WITHOUT a shell (so a drop-in/config file is written safely, not via an
+    # `echo > file` redirect the no-shell runner cannot execute). Each entry is
+    # {"path": str, "content": str, "mode"?: octal str}. Snapshotted + rolled back
+    # like backup_paths.
+    write_files: List[Dict[str, Any]] = field(default_factory=list)
     # Populated by the applier:
     applied: bool = False
     rolled_back: bool = False

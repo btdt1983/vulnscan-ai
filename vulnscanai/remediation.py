@@ -42,11 +42,19 @@ file(s) you change so they can be snapshotted and rolled back. Provide a \
 `nginx -t`, `visudo -cf <file>`), and set "service" + "restart_mode" to apply it. \
 PREFER "reload" over "restart" to avoid dropping live connections. For sshd \
 always use validate_cmd `sshd -t`, service `sshd`, restart_mode `reload`.
+- To CREATE or fully REPLACE a file (a drop-in or a new config file), put it in \
+"write_files" as {"path": "<file>", "content": "<full file content>"} — the tool \
+writes it safely and snapshots it for rollback. NEVER write a file with a shell \
+redirect (`>`), a pipe or a here-doc: commands run WITHOUT a shell, so such a \
+command does nothing. Editing a few lines of an EXISTING file is fine with a \
+command like `sed -i` (no redirection).
 - For a systemd service hardening finding, create a drop-in at \
-`/etc/systemd/system/<unit>.d/10-hardening.conf` (the path is given as `dropin`). \
-Set "backup_paths" to that file, make `systemctl daemon-reload` the LAST command \
-after writing it, set "validate_cmd" to `systemd-analyze verify <unit>`, "service" \
-to the unit, "restart_mode" to `restart`, and add `systemctl daemon-reload` to \
+`/etc/systemd/system/<unit>.d/10-hardening.conf` (the path is given as `dropin`) \
+by putting it in "write_files" as {"path": "<dropin>", "content": \
+"[Service]\\n<directives>"}. Set "backup_paths" to that same path, make \
+`systemctl daemon-reload` the command (it picks up the new drop-in), set \
+"validate_cmd" to `systemd-analyze verify <unit>`, "service" to the unit, \
+"restart_mode" to `restart`, and add `systemctl daemon-reload` to \
 "rollback_commands". Apply only conservative directives that will not break the \
 service.
 - For an exposed-port finding, prefer the least-disruptive fix: bind the service \
@@ -68,6 +76,7 @@ Schema:
   "risk": "low",
   "confidence": 0.0,
   "backup_paths": ["<exact file you edit>"],
+  "write_files": [{"path": "<file to create/replace>", "content": "<full content>"}],
   "validate_cmd": "<non-destructive config check e.g. sshd -t, or null>",
   "service": "<systemd unit to reload, or null>",
   "restart_mode": "none",
@@ -155,6 +164,71 @@ def screen_command(cmd: str) -> Optional[str]:
                 "no-shell runner cannot execute as written — export it with "
                 "'fix --export-script' to run it in a real shell")
     return None
+
+
+# Locations a remediation must never write a file to. Config fixes legitimately
+# write drop-ins / service config under /etc; the auth databases and the pseudo
+# filesystems are out of scope and dangerous to overwrite.
+_WRITE_DENY_EXACT = {"/etc/shadow", "/etc/gshadow", "/etc/passwd", "/etc/group",
+                     "/etc/sudoers", "/etc/fstab"}
+_WRITE_DENY_PREFIXES = ("/dev/", "/proc/", "/sys/", "/boot/")
+
+
+def _screen_write_path(path: str) -> Optional[str]:
+    """Return a reason if a fix must not write this path, else None."""
+    if not path or not os.path.isabs(path):
+        return "refused: write path is not absolute"
+    norm = os.path.normpath(path)
+    if norm in _WRITE_DENY_EXACT:
+        return f"refused: writing {norm} is not allowed"
+    if norm.startswith(_WRITE_DENY_PREFIXES) or norm in ("/dev", "/proc", "/sys", "/boot"):
+        return f"refused: writing under a system/pseudo path is not allowed ({norm})"
+    if os.path.isdir(norm):
+        return f"refused: {norm} is a directory"
+    return None
+
+
+def _parse_write_files(val: object) -> List[Dict[str, str]]:
+    """Coerce the model's `write_files` into [{path, content, mode?}].
+
+    Drops entries without a real absolute path or with placeholder content, so a
+    weak model that echoes the schema can't turn into a bogus file write.
+    """
+    out: List[Dict[str, str]] = []
+    for item in _as_list(val):
+        if not isinstance(item, dict):
+            continue
+        path = _scrub(item.get("path"))
+        if not path or not os.path.isabs(path):
+            continue
+        content = item.get("content")
+        if content is None:                       # "" is a valid empty file
+            continue
+        content = str(content)
+        stripped = content.strip()
+        if stripped.startswith("<") and stripped.endswith(">"):
+            continue                              # echoed <placeholder>
+        entry: Dict[str, str] = {"path": path, "content": content}
+        mode = item.get("mode")
+        if isinstance(mode, str) and re.fullmatch(r"0?[0-7]{3,4}", mode.strip()):
+            entry["mode"] = mode.strip()
+        out.append(entry)
+    return out
+
+
+def _write_file(path: str, content: str, mode: int = 0o644) -> Dict[str, object]:
+    """Write one file (no shell), creating parent dirs. Returns a result dict."""
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.chmod(path, mode)
+        return {"command": f"write {path} ({len(content)} bytes)",
+                "status": "ok", "detail": f"mode {oct(mode)}"}
+    except OSError as exc:
+        return {"command": f"write {path}", "status": "error", "detail": str(exc)}
 
 
 def _finding_brief(f: Finding) -> str:
@@ -301,12 +375,14 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
     backup_paths = [str(p) for p in _as_list(data.get("backup_paths")) if str(p).strip()]
     service = _scrub(data.get("service"))
     validate_cmd = _real_command(data.get("validate_cmd"))
+    write_files = _parse_write_files(data.get("write_files"))
 
     # Transactional scaffolding only makes sense for config/service findings.
     # Strip it from package-CVE findings, where the model tends to hallucinate
-    # unrelated config backups / service restarts.
+    # unrelated config backups / service restarts / file writes.
     if finding.source not in _CONFIG_SOURCES:
         backup_paths, validate_cmd, service, restart_mode = [], None, None, "none"
+        write_files = []
 
     rem = Remediation(
         summary=_scrub(data.get("summary")) or "",
@@ -326,6 +402,7 @@ def propose(provider: AIProvider, finding: Finding) -> Remediation:
         restart_mode=restart_mode,
         rollback_commands=[str(c) for c in _as_list(data.get("rollback_commands"))
                            if str(c).strip()],
+        write_files=write_files,
     )
     return rem
 
@@ -444,7 +521,7 @@ def _restore_clean(results: List[Dict[str, object]]) -> bool:
 
 def _is_transactional(rem: Remediation) -> bool:
     return bool(rem.backup_paths or rem.service or rem.validate_cmd
-                or rem.rollback_commands)
+                or rem.rollback_commands or rem.write_files)
 
 
 # --------------------------------------------------------------------------- #
@@ -525,10 +602,27 @@ def _apply_transactional(finding: Finding, dry_run: bool,
             emit({"command": cmd, "status": "blocked", "detail": reason})
             rem.applied = False
             return False
+    # Screen the write targets too — a disallowed path must abort before we
+    # snapshot or write anything.
+    for wf in rem.write_files:
+        reason = _screen_write_path(wf["path"])
+        if reason:
+            emit({"command": f"write {wf['path']}", "status": "blocked",
+                  "detail": reason})
+            rem.applied = False
+            return False
+
+    # Files created/replaced are snapshotted alongside backup_paths so a rollback
+    # can restore an overwritten file or remove a newly-created one.
+    snapshot_paths = list(dict.fromkeys(
+        list(rem.backup_paths) + [wf["path"] for wf in rem.write_files]))
 
     if dry_run:
-        if rem.backup_paths:
-            emit({"command": f"backup {', '.join(rem.backup_paths)}",
+        if snapshot_paths:
+            emit({"command": f"backup {', '.join(snapshot_paths)}",
+                  "status": "dry-run", "detail": "not executed"})
+        for wf in rem.write_files:
+            emit({"command": f"write {wf['path']} ({len(wf['content'])} bytes)",
                   "status": "dry-run", "detail": "not executed"})
         for cmd in rem.commands:
             emit({"command": cmd, "status": "dry-run", "detail": "not executed"})
@@ -541,11 +635,11 @@ def _apply_transactional(finding: Finding, dry_run: bool,
         rem.applied = False
         return True
 
-    # 1. Snapshot the files we are about to change.
-    if rem.backup_paths:
+    # 1. Snapshot the files we are about to change (edited AND written).
+    if snapshot_paths:
         dest = os.path.join(state_dir or os.getcwd(), "backups", finding.id,
                             time.strftime("%Y%m%d-%H%M%S"))
-        emit(_snapshot(rem.backup_paths, dest))
+        emit(_snapshot(snapshot_paths, dest))
         rem.backup_dir = dest
 
     def _rollback(reason: str) -> bool:
@@ -576,7 +670,15 @@ def _apply_transactional(finding: Finding, dry_run: bool,
         rem.rolled_back = True
         return False
 
-    # 2. Run the change commands. "no-change" (dnf nothing-to-do) is surfaced
+    # 2. Write the created/replaced files (no shell) BEFORE the commands, so a
+    # `systemctl daemon-reload` in the commands picks up a just-written drop-in.
+    for wf in rem.write_files:
+        mode = int(wf["mode"], 8) if wf.get("mode") else 0o644
+        res = emit(_write_file(wf["path"], wf["content"], mode))
+        if res["status"] != "ok":
+            return _rollback(f"could not write {wf['path']}")
+
+    # 3. Run the change commands. "no-change" (dnf nothing-to-do) is surfaced
     # but is not a failure, so it does not trigger a rollback.
     for cmd in rem.commands:
         res = emit(_run(cmd))
