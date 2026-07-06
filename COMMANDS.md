@@ -494,6 +494,7 @@ self-signed certificate on first run, a single admin account.
 vulnscan-ai dashboard [--port N] [--bind ADDR]
 vulnscan-ai dashboard --set-password [--user NAME]
 vulnscan-ai dashboard --allow IP/CIDR ... | --deny IP/CIDR ... | --list
+vulnscan-ai dashboard --enable-fix | --disable-fix
 ```
 
 | Option | Description |
@@ -502,7 +503,9 @@ vulnscan-ai dashboard --allow IP/CIDR ... | --deny IP/CIDR ... | --list
 | `--user NAME` | Admin username (default `admin`). |
 | `--allow IP/CIDR` | Permit a network client besides localhost (repeatable), then exit. |
 | `--deny IP/CIDR` | Remove a permitted client (repeatable), then exit. |
-| `--list` | Show user / port / bind / allow-list, then exit. |
+| `--list` | Show user / port / bind / allow-list / apply-fix state, then exit. |
+| `--enable-fix` | Allow applying fixes from the dashboard UI (`dashboard_allow_fix=true`), then exit. **Grants web-UI users root-equivalent remediation power.** |
+| `--disable-fix` | Disable applying fixes from the dashboard UI (preview only), then exit. |
 | `--port N` | Listen port (default `65101`). |
 | `--bind ADDR` | Bind address (default `127.0.0.1`; auto `0.0.0.0` when an allow-list is set). |
 
@@ -518,8 +521,13 @@ finding matches — the highest-priority signals up front.
 **Actions in the UI.** A **Scan now** button runs the configured scanners in the
 background; per-finding **Preview fix** shows the AI's proposed plan (dry-run, no
 execution). **Apply fix** runs the fix transactionally on the host and is **off
-by default** — set `"dashboard_allow_fix": true` in the config to make the Apply
-button appear (login + allow-list still apply). `--list` shows this state.
+by default** — run `vulnscan-ai dashboard --enable-fix` (or set
+`"dashboard_allow_fix": true` in the config, or use the interactive menu's *Web
+dashboard → Enable applying fixes* entry) to make the Apply button appear (login
++ allow-list still apply). `--disable-fix` turns it back off; `--list` shows the
+current state. Enabling it grants anyone who can log into the dashboard
+root-equivalent remediation power, so keep the password strong and the allow-list
+tight.
 
 **Advisories tab.** A second tab shows recent vulnerability [news](#news) (CISA
 KEV, NVD, distro errata), refreshed in the background and cached so it works

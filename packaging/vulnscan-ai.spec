@@ -3,7 +3,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.3.0
+Version:        0.3.1
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -105,6 +105,16 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.3.1-1
+- Dashboard apply-fix toggle is now a first-class control:
+  * new `vulnscan-ai dashboard --enable-fix` / `--disable-fix` write
+    `dashboard_allow_fix` (no more hand-editing the config file); `--list`
+    reports the current state.
+  * the interactive menu's "Web dashboard" screen gains an Enable/Disable
+    applying-fixes entry that shows the current state and prints a clear
+    warning (enabling grants dashboard users root-equivalent remediation
+    power) before it opts you in.
+
 * Sat Jul 04 2026 vulnscan-ai <noreply@example.invalid> - 1:0.3.0-1
 - Compliance benchmark scanning (CIS / DISA STIG / PCI-DSS / HIPAA / ANSSI):
   * new `scan --compliance <profile>` mode runs `oscap xccdf eval` against the

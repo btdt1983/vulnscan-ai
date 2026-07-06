@@ -834,6 +834,27 @@ class TestWizardConfig(unittest.TestCase):
                 if old is not None:
                     os.environ["HOME"] = old
 
+    def test_dashboard_enable_fix_persists(self):
+        from vulnscanai.config import Config
+        from vulnscanai.cli import build_parser, cmd_dashboard
+        old = os.environ.get("HOME")
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["HOME"] = d
+            try:
+                p = build_parser()
+                c = Config()
+                cfgpath = c.user_config_path()   # honours the swapped HOME
+                self.assertFalse(c.dashboard_allow_fix)
+                rc = cmd_dashboard(c, p.parse_args(["dashboard", "--enable-fix"]))
+                self.assertEqual(rc, 0)
+                self.assertTrue(c.dashboard_allow_fix)                     # in-memory
+                self.assertTrue(Config.load(cfgpath).dashboard_allow_fix)  # persisted
+                cmd_dashboard(c, p.parse_args(["dashboard", "--disable-fix"]))
+                self.assertFalse(Config.load(cfgpath).dashboard_allow_fix)
+            finally:
+                if old is not None:
+                    os.environ["HOME"] = old
+
     def test_should_offer_setup_guards(self):
         from vulnscanai.config import Config
         from vulnscanai.wizard import should_offer_setup
@@ -2108,6 +2129,30 @@ class TestMenu(unittest.TestCase):
         self._stub(choose=["allow"], ask=["10.0.0.0/24"])
         self.assertEqual(self.menu._b_dashboard(Config()),
                          ["dashboard", "--allow", "10.0.0.0/24"])
+
+    def test_dashboard_enable_fix_confirmed(self):
+        # Currently disabled -> select the toggle -> confirm the warning.
+        self._stub(choose=["fixtoggle"], yesno=[True])
+        cfg = Config()
+        cfg.dashboard_allow_fix = False
+        argv = self.menu._b_dashboard(cfg)
+        self.assertEqual(argv, ["dashboard", "--enable-fix"])
+        self._parses(argv)
+
+    def test_dashboard_enable_fix_declined(self):
+        # Declining the warning abandons the action (no argv).
+        self._stub(choose=["fixtoggle"], yesno=[False])
+        cfg = Config()
+        cfg.dashboard_allow_fix = False
+        self.assertIsNone(self.menu._b_dashboard(cfg))
+
+    def test_dashboard_disable_fix_when_enabled(self):
+        # When already enabled the toggle offers to disable it.
+        self._stub(choose=["fixtoggle"], yesno=[True])
+        cfg = Config()
+        cfg.dashboard_allow_fix = True
+        self.assertEqual(self.menu._b_dashboard(cfg),
+                         ["dashboard", "--disable-fix"])
 
     def test_scheduled_argv(self):
         self._stub(choose=["default", "important"], yesno=[True, False])

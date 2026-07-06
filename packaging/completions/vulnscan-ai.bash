@@ -45,7 +45,7 @@ _vulnscan_ai() {
         rollback)  opts="--list";;
         report)    opts="-o --output --min-severity";;
         scheduled) opts="--scanner --all --no-enrich --min-severity --plan --html --keep --fail-on";;
-        dashboard) opts="--set-password --user --allow --deny --list --port --bind";;
+        dashboard) opts="--set-password --user --allow --deny --list --enable-fix --disable-fix --port --bind";;
         news)      opts="--source --refresh --limit";;
         *)         opts="";;
     esac

@@ -191,7 +191,15 @@ Listen port (default 65101).
 Permit / remove a network client (besides loopback).
 .TP
 .B \-\-list
-Show dashboard settings, then exit.
+Show dashboard settings (including the apply-fix state), then exit.
+.TP
+.B \-\-enable\-fix
+Allow applying fixes from the dashboard UI (sets \fBdashboard_allow_fix=true\fR),
+then exit. This grants anyone who can log into the dashboard root\-equivalent
+remediation power \(em keep the password strong and the allow\-list tight.
+.TP
+.B \-\-disable\-fix
+Disable applying fixes from the dashboard UI (preview only), then exit.
 .SS news
 Show recent vulnerability advisories aggregated from public feeds: CISA KEV
 (actively exploited), NIST NVD (recent CVEs) and the host distribution's errata.

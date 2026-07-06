@@ -444,12 +444,17 @@ def _b_news(cfg) -> Optional[List[str]]:
 
 
 def _b_dashboard(cfg) -> Optional[List[str]]:
+    fix_on = bool(getattr(cfg, "dashboard_allow_fix", False))
+    fix_label = ("Disable applying fixes from the dashboard (back to preview-only)"
+                 if fix_on else
+                 "Enable applying fixes from the dashboard  ⚠ lets the web UI change the system")
     action = _choose("Web dashboard", [
         ("Start the dashboard server", "start"),
         ("Set or replace the login password", "pw"),
         ("Show the current configuration", "list"),
         ("Allow a network client (IP/CIDR)", "allow"),
         ("Remove a network client (IP/CIDR)", "deny"),
+        (fix_label, "fixtoggle"),
     ])
     if action is _CANCEL:
         return None
@@ -457,6 +462,24 @@ def _b_dashboard(cfg) -> Optional[List[str]]:
         return ["dashboard", "--set-password"]
     if action == "list":
         return ["dashboard", "--list"]
+    if action == "fixtoggle":
+        if fix_on:
+            if not _ask_yesno("Applying fixes from the dashboard is currently "
+                              "ENABLED. Disable it (preview only)?", True):
+                return None
+            return ["dashboard", "--disable-fix"]
+        _eprint(
+            "\n  ⚠  WARNING — applying fixes from the dashboard\n"
+            "     This lets anyone who can log into the web dashboard run\n"
+            "     privileged remediation: real system and config changes\n"
+            "     (package updates, service restarts, file edits) from the\n"
+            "     browser, without a shell. The dashboard stays login-gated\n"
+            "     and defaults to localhost, but treat this as granting remote\n"
+            "     root-equivalent power. Only enable it on a trusted host with\n"
+            "     a strong password and a tight allow-list.\n")
+        if not _ask_yesno("Enable applying fixes from the dashboard?", False):
+            return None
+        return ["dashboard", "--enable-fix"]
     if action in ("allow", "deny"):
         ip = _ask("IP or CIDR", "")
         if not ip:

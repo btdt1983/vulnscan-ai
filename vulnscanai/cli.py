@@ -809,6 +809,19 @@ def cmd_dashboard(cfg: Config, args) -> int:
         print(f"Allowed network clients: {allow or '(localhost only)'}")
         print(f"Saved to {path}")
         return 0
+    if args.enable_fix or args.disable_fix:
+        enable = bool(args.enable_fix)
+        path = cfg.write_user_config({"dashboard_allow_fix": enable})
+        cfg.dashboard_allow_fix = enable
+        if enable:
+            print("Apply-fix from the dashboard is now ENABLED.")
+            print("WARNING: anyone who can log into the dashboard can now run "
+                  "privileged remediation (system/config changes) from the web "
+                  "UI. Keep the login password strong and the allow-list tight.")
+        else:
+            print("Apply-fix from the dashboard is now DISABLED (preview only).")
+        print(f"Saved to {path}")
+        return 0
     if args.list:
         pw = "set" if cfg.dashboard_password_hash else "NOT set (run --set-password)"
         print(f"user:     {cfg.dashboard_user}")
@@ -1031,6 +1044,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="remove a permitted client (repeatable), then exit")
     sp.add_argument("--list", action="store_true",
                     help="show dashboard settings, then exit")
+    fixgrp = sp.add_mutually_exclusive_group()
+    fixgrp.add_argument("--enable-fix", action="store_true",
+                        help="allow applying fixes from the dashboard UI "
+                             "(sets dashboard_allow_fix=true), then exit")
+    fixgrp.add_argument("--disable-fix", action="store_true",
+                        help="disable applying fixes from the dashboard UI "
+                             "(preview only), then exit")
     sp.add_argument("--port", type=int, help="listen port (default: 65101)")
     sp.add_argument("--bind",
                     help="bind address (default: 127.0.0.1; auto 0.0.0.0 with an allow-list)")

@@ -89,6 +89,8 @@ _vulnscan-ai() {
             '*--allow[permit a network client]:ip/cidr:' \
             '*--deny[remove a permitted client]:ip/cidr:' \
             '--list[show dashboard settings, then exit]' \
+            '--enable-fix[allow applying fixes from the dashboard UI, then exit]' \
+            '--disable-fix[disable applying fixes from the dashboard UI, then exit]' \
             '--port[listen port]:port:' \
             '--bind[bind address]:address:' ;;
         news)

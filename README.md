@@ -460,8 +460,11 @@ overridable.
   plan — a dry-run, nothing is executed. Needs an AI provider configured.
 - **Apply fix** actually runs the fix on the host (transactional, with
   auto-rollback). It is **off by default** — the dashboard stays read-only
-  unless you opt in with `"dashboard_allow_fix": true` in the config. Only then
-  does the Apply button appear. (Login + the allow-list still gate access.)
+  unless you opt in with `vulnscan-ai dashboard --enable-fix` (or
+  `"dashboard_allow_fix": true` in the config, or the interactive menu's *Web
+  dashboard → Enable applying fixes* entry). Only then does the Apply button
+  appear; `--disable-fix` turns it back off. (Login + the allow-list still gate
+  access — and enabling it grants those users root-equivalent remediation power.)
 
 Opening it to the network is two layers: the app allow-list **and** the host
 firewall. firewalld blocks the port by default — allow it only for your clients:
