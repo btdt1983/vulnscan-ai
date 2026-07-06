@@ -51,7 +51,11 @@ echo ">> releasing vulnscan-ai $VERSION for: $DISTS"
 _build_podman() {
     local dist="$1" rt="${CONTAINER_RT:-podman}"
     echo ">> [$dist] native build in ${rt} almalinux:${dist#el}"
-    "$rt" run --rm -v "$PWD":/src:ro -v "$OUT":/out "almalinux:${dist#el}" bash -c '
+    # label=disable so the ephemeral build container can read the source and
+    # write $OUT without SELinux relabeling the host repo (a :Z mount would
+    # rewrite the working tree's labels to container_file_t).
+    "$rt" run --rm --security-opt label=disable \
+        -v "$PWD":/src:ro -v "$OUT":/out "almalinux:${dist#el}" bash -c '
         set -e
         dnf -y install dnf-plugins-core >/dev/null 2>&1
         dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
