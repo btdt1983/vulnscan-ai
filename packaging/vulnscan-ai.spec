@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.1
+Version:        0.4.2
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -112,6 +112,26 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.2-1
+- Structured file writes: config/drop-in fixes apply in-process again. A fix that
+  creates or replaces a file (e.g. a systemd hardening drop-in) now carries the
+  file path + content, and the transactional engine writes it safely WITHOUT a
+  shell — closing the gap the 0.4.1 no-shell hardening opened (previously such a
+  fix was blocked and only worked via `--export-script`).
+  * New `write_files` remediation field; the model is prompted to use it instead
+    of a shell redirect. Sanitised on the way in (absolute path only; placeholder/
+    relative/non-dict entries dropped) and stripped from package-CVE findings.
+  * The engine screens write targets (refuses non-absolute paths, /etc/shadow,
+    /etc/passwd, /dev|/proc|/sys|/boot, directories), snapshots the written files
+    alongside backup_paths, writes them before the commands (so a following
+    `systemctl daemon-reload` picks up a new drop-in), and on any failure rolls
+    back — removing a created file or restoring an overwritten one.
+  * `fix --export-script`/`--export-ansible` now render the file writes too
+    (bash heredoc / Ansible copy-with-content); fixed the exported backup/restore
+    helpers so a newly-created file no longer trips `set -e` and rollback removes
+    it, matching the in-process engine.
+- +11 tests (227), integration suite still green, bandit clean.
+
 * Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.1-1
 - Stability release — hardening of what the tool already does, no new surface.
 - Remediation engine (the code that changes the system):
