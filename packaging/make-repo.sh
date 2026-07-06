@@ -122,10 +122,14 @@ for rpm in "${RPMS[@]}"; do
     esac
 done
 
-# 4. Build + sign metadata for each dist.
+# 4. Build + sign metadata for each dist. Full (non-incremental) scan on
+#    purpose: `--update` reuses the old repomd and does NOT drop packages whose
+#    RPM was removed from the tree, so a prune (delete old RPM + re-run) would
+#    leave the pruned version lingering in the metadata. A fresh scan always
+#    matches exactly what is on disk (the repo is small, so the cost is nil).
 for dist in "${!DISTS[@]}"; do
     echo ">> createrepo $dist"
-    createrepo_c --update "$REPO_ROOT/$dist" >/dev/null
+    createrepo_c "$REPO_ROOT/$dist" >/dev/null
     rm -f "$REPO_ROOT/$dist/repodata/repomd.xml.asc"
     gpg --batch --yes "${GPG_PASS[@]}" -u "$KEYID" \
         --detach-sign --armor "$REPO_ROOT/$dist/repodata/repomd.xml"
