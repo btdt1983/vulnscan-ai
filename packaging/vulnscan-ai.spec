@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.0
+Version:        0.4.1
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -112,6 +112,31 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.1-1
+- Stability release — hardening of what the tool already does, no new surface.
+- Remediation engine (the code that changes the system):
+  * Rollback can no longer report success when it failed. `rollback` (and the
+    automatic rollback) now return the true outcome; a missing/partial restore
+    is surfaced as ROLLBACK INCOMPLETE instead of a false "reverted", and the
+    audit log records it truthfully.
+  * File-writing fixes no longer silently no-op into a false success. Commands
+    that need a shell (redirect/pipe/&&/$()/backtick) — which the no-shell
+    runner cannot execute as written — are now blocked with a message pointing
+    at `--export-script`, instead of running e.g. `echo … > file` as a no-op and
+    reporting "applied".
+- Parser robustness: the scanner/feed parsers survive malformed external data
+  (a null item or wrong-typed field in CISA KEV / Rocky Apollo JSON or a
+  container inspect object) by skipping the bad item instead of crashing
+  `news`/container scans.
+- Never-crash CLI: a last-resort guard means an unexpected error prints a
+  readable message and exits non-zero instead of dumping a traceback
+  (VULNSCANAI_DEBUG=1 re-raises); a corrupt config or findings.json degrades
+  with a warning instead of bricking the command.
+- Tests: +22 (fuzz battery for every parser, engine rollback/shell cases,
+  never-crash paths) plus an opt-in integration suite that runs the real
+  ss/systemd-analyze/oscap and the scanners against a live host
+  (VULNSCANAI_INTEGRATION=1).
+
 * Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.0-1
 - New `audit` command: an append-only remediation audit log. Every fix actually
   applied (and every rollback), from the CLI or the web dashboard, is recorded
