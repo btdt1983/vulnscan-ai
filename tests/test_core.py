@@ -2588,5 +2588,67 @@ class TestAudit(unittest.TestCase):
         self.assertTrue(hasattr(build_parser().parse_args(["audit", "--limit", "20"]), "func"))
 
 
+class TestParserRobustness(unittest.TestCase):
+    """Parsers consume external tool/API output, so malformed input must degrade
+    (return empty / skip the bad item), never raise. Fuzz the whole battery."""
+
+    BAD_STR = [
+        "", "   ", "\n\n\n", chr(0) + chr(1) + chr(2), "no structure here",
+        "x" * 50000, "a\tb", "col only", "1 2 3 4 5 6 7 8 9", "None",
+        "]]}}{{[[", chr(0x7f) + chr(0x80), "=====", "line\n" + chr(0) + "\n",
+    ]
+    BAD_DICT = [
+        {}, {"x": 1}, {"vulnerabilities": None}, {"vulnerabilities": [None]},
+        {"vulnerabilities": [{}]}, {"advisories": [None]}, {"advisories": [{}]},
+        {"data": None}, {"epss": None}, [], "notadict", None, 0,
+        {"advisories": [{"cves": [None], "name": "X"}]},
+    ]
+
+    def test_text_parsers_never_raise(self):
+        from vulnscanai.scanners import (ssh_config, applicability, dnf_rhsa,
+                                         ports, systemd_security, webroot,
+                                         compliance)
+        from vulnscanai import feeds
+        parsers = [
+            ssh_config.parse_sshd_config, applicability.parse_check_update,
+            applicability.parse_updateinfo_advisories, dnf_rhsa.parse_nevra,
+            ports.parse_ss, systemd_security.parse_security_overview,
+            systemd_security.parse_unit_detail, webroot.parse_nginx_roots,
+            webroot.parse_apache_roots, webroot.parse_lighttpd_roots,
+            webroot.parse_litespeed_roots, compliance.parse_profiles,
+        ]
+        for fn in parsers:
+            for bad in self.BAD_STR:
+                try:
+                    fn(bad)
+                except Exception as e:  # noqa: BLE001
+                    self.fail(f"{fn.__module__}.{fn.__name__} raised "
+                              f"{type(e).__name__} on {bad!r}: {e}")
+        for bad in self.BAD_STR:
+            for src in ("alma", "rocky"):
+                feeds.parse_errata_rss(bad, src)
+            feeds.parse_oracle_oval(bad, "9")
+
+    def test_json_feed_and_container_parsers_never_raise(self):
+        from vulnscanai import feeds
+        from vulnscanai.scanners import container, ports, nvd
+        for bad in self.BAD_DICT:
+            feeds.parse_kev(bad)
+            feeds.parse_nvd(bad)
+            feeds.parse_epss(bad)
+            feeds.parse_rocky_apollo(bad, "9")
+            ports.parse_nft_ruleset(bad if isinstance(bad, dict) else {})
+            container.assess_container(bad, "podman")
+            nvd.select_package_state(bad, "9", None)
+        # nested-malformed container inspect objects + junk mount sources
+        for info in [{"HostConfig": {"Binds": None, "CapAdd": None}},
+                     {"HostConfig": {"Binds": "notalist", "Mounts": [None]}},
+                     {"HostConfig": {"Mounts": [{"Source": 5, "RW": "x"}]}},
+                     {"Id": None, "Config": None, "HostConfig": None}]:
+            container.assess_container(info, "podman")
+        for src in (None, 123, "", "/var/run/docker.sock"):
+            container.classify_mount(src, True)
+
+
 if __name__ == "__main__":
     unittest.main()

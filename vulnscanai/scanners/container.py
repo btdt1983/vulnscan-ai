@@ -88,7 +88,7 @@ def _norm_cap(cap: str) -> str:
 
 def classify_mount(source: str, rw: bool) -> Optional[Tuple[str, str, str]]:
     """Map a host bind source to (label, severity, reason), or None if benign."""
-    src = os.path.normpath(source or "")
+    src = os.path.normpath(str(source) if source else "")
     base = os.path.basename(src)
     if base in _RUNTIME_SOCKETS or src.endswith(_RUNTIME_SOCKETS):
         return ("the container runtime control socket", "critical",
@@ -153,8 +153,12 @@ def _is_root_user(user: str) -> bool:
 
 def assess_container(info: Dict, runtime: str = "") -> List[Finding]:
     """Apply the hardening ruleset to one inspect object, returning findings."""
-    host = info.get("HostConfig") or {}
-    conf = info.get("Config") or {}
+    if not isinstance(info, dict):
+        return []                        # malformed inspect JSON -> no findings
+    host = info.get("HostConfig")
+    host = host if isinstance(host, dict) else {}
+    conf = info.get("Config")
+    conf = conf if isinstance(conf, dict) else {}
     name = (info.get("Name") or "").lstrip("/") or (info.get("Id") or "")[:12]
     cid = (info.get("Id") or "")[:12]
     image = conf.get("Image") or info.get("ImageName") or ""

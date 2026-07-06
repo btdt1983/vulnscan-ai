@@ -101,6 +101,8 @@ def parse_kev(data: Dict, limit: int = 50) -> List[NewsItem]:
     vulns = data.get("vulnerabilities") if isinstance(data, dict) else None
     out: List[NewsItem] = []
     for v in vulns or []:
+        if not isinstance(v, dict):
+            continue
         cve = str(v.get("cveID", "")).upper()
         if not cve:
             continue
@@ -246,6 +248,8 @@ def parse_rocky_apollo(data: Dict, major: str = "", limit: int = 50) -> List[New
     advs = data.get("advisories") if isinstance(data, dict) else None
     out: List[NewsItem] = []
     for a in advs or []:
+        if not isinstance(a, dict):
+            continue
         name = str(a.get("name", "")).strip()
         if not name:
             continue
@@ -255,7 +259,8 @@ def parse_rocky_apollo(data: Dict, major: str = "", limit: int = 50) -> List[New
             continue
         sev = _norm_sev(str(a.get("severity", "")).replace("SEVERITY_", ""))
         cves = [str(c.get("name", "")).upper()
-                for c in (a.get("cves") or []) if c.get("name")]
+                for c in (a.get("cves") or [])
+                if isinstance(c, dict) and c.get("name")]
         out.append(NewsItem(
             id=f"rocky:{name}", source="rocky",
             title=f"{name} {a.get('synopsis', '')}".strip(), severity=sev,
