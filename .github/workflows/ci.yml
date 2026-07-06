@@ -11,8 +11,14 @@ jobs:
   # Fast unit tests + CLI smoke test on a RHEL-like image.
   # ---------------------------------------------------------------- #
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # EL9 ships Python 3.9, EL10 ships 3.12 — run the stdlib tests on both
+        # so a 3.12 runtime regression is caught on every push, not at release.
+        image: ['almalinux:9', 'almalinux:10']
     runs-on: ubuntu-latest
-    container: almalinux:9
+    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Python

@@ -18,10 +18,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DISTS="${DISTS:-el9}"
-# noarch packages are mirrored into these extra EL trees with no rebuild
-# (default el10; el8 is intentionally excluded — its Python is too old).
-EXTRA_DISTS="${EXTRA_DISTS:-el10}"
+DISTS="${DISTS:-el9 el10}"
+# Extra EL trees to receive the host-built *noarch* RPM with NO rebuild. Empty
+# by default: a pyproject/noarch package bakes the build interpreter's versioned
+# site-packages path (…/python3.9/…) into its file list, so an el9 build is not
+# importable on el10 (Python 3.12) even though it "installs". Each EL is a real
+# build target below instead. Only set this for a truly interpreter-independent
+# noarch package.
+EXTRA_DISTS="${EXTRA_DISTS:-}"
 REPO_ROOT="${REPO_ROOT:-/srv/repo}"
 REPO_BASEURL="${REPO_BASEURL:-https://repo.techhack.nl}"
 HOST_DIST="${HOST_DIST:-el9}"
@@ -40,6 +44,26 @@ if [ -n "${RELEASE_TAG:-}" ] && [ "${RELEASE_TAG#v}" != "$VERSION" ]; then
 fi
 echo ">> releasing vulnscan-ai $VERSION for: $DISTS"
 
+# Build the RPM natively for one EL release inside its own AlmaLinux container,
+# so its files land under that release's Python site-packages (…/python3.12/…
+# on el10) and it is genuinely importable there — a plain el9→el10 copy is not.
+# Copies the resulting noarch RPM into $OUT.
+_build_podman() {
+    local dist="$1" rt="${CONTAINER_RT:-podman}"
+    echo ">> [$dist] native build in ${rt} almalinux:${dist#el}"
+    "$rt" run --rm -v "$PWD":/src:ro -v "$OUT":/out "almalinux:${dist#el}" bash -c '
+        set -e
+        dnf -y install dnf-plugins-core >/dev/null 2>&1
+        dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
+        dnf -y install rpm-build rpmdevtools python3-devel pyproject-rpm-macros \
+            systemd-rpm-macros python3-setuptools python3-wheel python3-pip >/dev/null 2>&1
+        rpmdev-setuptree
+        cp -r /src /tmp/build && cd /tmp/build
+        bash packaging/build-rpm.sh >/dev/null
+        cp "$(find "$HOME"/rpmbuild/RPMS -name "vulnscan-ai-*.noarch.rpm" | head -1)" /out/
+    '
+}
+
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 for dist in $DISTS; do
     if [ "$dist" = "$HOST_DIST" ] && [ "${USE_MOCK:-0}" != "1" ]; then
@@ -47,11 +71,15 @@ for dist in $DISTS; do
         bash packaging/build-rpm.sh >/dev/null
         find "$(rpm --eval '%{_topdir}')/RPMS" \
              -name "vulnscan-ai-${VERSION}-*.${dist}.*.rpm" -exec cp {} "$OUT/" \;
-    else
+    elif [ "${USE_MOCK:-0}" = "1" ]; then
         echo ">> [$dist] clean-chroot build (mock)"
         command -v mock >/dev/null || { echo "ERROR: mock not installed for $dist"; exit 1; }
         srpm="$(bash packaging/build-rpm.sh srpm | tail -1)"
         mock -r "alma+epel-${dist#el}-x86_64" --resultdir="$OUT/$dist" --rebuild "$srpm"
+    elif command -v "${CONTAINER_RT:-podman}" >/dev/null; then
+        _build_podman "$dist"
+    else
+        echo "ERROR: no builder for $dist (need the host dist, USE_MOCK=1, or podman)"; exit 1
     fi
 done
 

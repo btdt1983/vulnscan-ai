@@ -950,9 +950,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 remediation.apply(target, dry_run=False, state_dir=cfg.state_dir)
                 applied = True
             except Exception as exc:  # noqa: BLE001
+                from . import audit
+                audit.record(cfg, target, event="apply", source="dashboard",
+                             actor=cfg.dashboard_user or "admin")
                 return self._html(200, render_fix_result(
                     target.title, fid, rem, allow_fix,
                     error=f"Apply failed: {exc}"))
+            from . import audit
+            audit.record(cfg, target, event="apply", source="dashboard",
+                         actor=cfg.dashboard_user or "admin")
             # Persist the remediation + results back into findings.json.
             for i, f in enumerate(findings):
                 if f.id == target.id:

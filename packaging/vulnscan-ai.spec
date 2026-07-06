@@ -1,9 +1,16 @@
 %global pypi_name vulnscan-ai
 %global mod_name vulnscanai
 
+# The package is stdlib-only pure Python that runs on any interpreter >= 3.9.
+# Drop the exact `python(abi) = <build-python>` auto-requirement so one noarch
+# build stays installable across EL releases: pinning it to the build host's
+# ABI (3.9 on EL9) makes the package uninstallable on EL10 (Python 3.12). The
+# explicit `Requires: python3 >= 3.9` below is the real, honest floor.
+%global __requires_exclude ^python\\(abi\\)
+
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.3.1
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -105,6 +112,27 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.0-1
+- New `audit` command: an append-only remediation audit log. Every fix actually
+  applied (and every rollback), from the CLI or the web dashboard, is recorded
+  as one JSON line in <state-dir>/audit.log (0600) — timestamp, source, actor,
+  finding, result, and the AI provider/model that generated the plan. Dry-run
+  previews are not logged. `vulnscan-ai audit [--limit N] [--json]`; interactive
+  menu gains an Audit entry. Dashboard-applied fixes record the login user.
+- EL10 packages are now genuinely installable AND importable. Previously the
+  el10 tree served the el9 noarch build, whose files live under the build
+  interpreter's site-packages path (…/python3.9/…) and pin `python(abi) = 3.9`,
+  so it failed to install (or import) on EL10's Python 3.12. Each EL is now
+  built natively (release.sh builds el10 in an almalinux:10 container); the spec
+  also drops the exact `python(abi)` auto-requirement, keeping `python3 >= 3.9`
+  as the honest floor.
+- CI/release hardening: the tag workflow no longer hangs on a missing
+  self-hosted runner — it verifies build+install on el9 AND el10 on
+  GitHub-hosted runners, and the sign+publish job is opt-in (manual dispatch).
+  Unit tests also run on el10 (Python 3.12) on every push.
+- Packaging for Fedora Copr (.copr/Makefile + packaging/COPR.md) for free
+  el9/el10/fedora builds and a public repo URL.
+
 * Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.3.1-1
 - Dashboard apply-fix toggle is now a first-class control:
   * new `vulnscan-ai dashboard --enable-fix` / `--disable-fix` write

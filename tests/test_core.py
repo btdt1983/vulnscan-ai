@@ -2452,5 +2452,79 @@ class TestComplianceScanner(unittest.TestCase):
         self.assertIn("No compliance scan saved yet", empty)
 
 
+class TestAudit(unittest.TestCase):
+    def _finding(self, applied=True, provider="claude", model="m1"):
+        f = Finding(source="dnf", title="openssl flaw", severity="important")
+        rem = Remediation(provider=provider, model=model)
+        rem.apply_results = [{"command": "dnf -y update openssl", "status": "ok"}]
+        rem.applied = applied
+        f.remediation = rem
+        return f
+
+    def test_record_and_read(self):
+        from vulnscanai import audit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            path = audit.record(cfg, self._finding(), event="apply", source="cli")
+            self.assertTrue(os.path.isfile(path))
+            self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+            evs = audit.read(cfg)
+            self.assertEqual(len(evs), 1)
+            e = evs[0]
+            self.assertEqual(e["event"], "apply")
+            self.assertEqual(e["source"], "cli")
+            self.assertEqual(e["result"], "applied")
+            self.assertEqual(e["provider"], "claude")
+            self.assertEqual(e["model"], "m1")
+            self.assertTrue(e["ts"].endswith("Z"))
+
+    def test_dry_run_not_logged(self):
+        from vulnscanai import audit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            self.assertIsNone(audit.record(cfg, self._finding(),
+                                           event="apply", source="cli", dry_run=True))
+            self.assertEqual(audit.read(cfg), [])
+
+    def test_failed_and_rollback_results(self):
+        from vulnscanai import audit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            audit.record(cfg, self._finding(applied=False), event="apply", source="cli")
+            # restore_backup clears rem.applied -> a rollback reads as rolled-back
+            audit.record(cfg, self._finding(applied=False), event="rollback",
+                         source="cli", actor="root")
+            results = [e["result"] for e in audit.read(cfg)]
+            self.assertEqual(results, ["failed", "rolled-back"])
+            self.assertEqual(audit.read(cfg)[1]["actor"], "root")
+
+    def test_read_limit_and_corrupt_lines(self):
+        from vulnscanai import audit
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            for _ in range(5):
+                audit.record(cfg, self._finding(), event="apply", source="cli")
+            with open(audit.audit_log_path(cfg), "a", encoding="utf-8") as fh:
+                fh.write("this is not json\n")      # must be skipped, not crash
+            self.assertEqual(len(audit.read(cfg, limit=2)), 2)
+            self.assertEqual(len(audit.read(cfg, limit=0)), 5)  # 0 = all, corrupt dropped
+
+    def test_read_missing_file(self):
+        from vulnscanai import audit
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(audit.read(Config(state_dir=d)), [])
+
+    def test_menu_audit_builder(self):
+        from vulnscanai import menu
+        orig = menu._ask
+        menu._ask = lambda *a, **k: "20"
+        try:
+            self.assertEqual(menu._b_audit(Config()), ["audit", "--limit", "20"])
+        finally:
+            menu._ask = orig
+        from vulnscanai.cli import build_parser
+        self.assertTrue(hasattr(build_parser().parse_args(["audit", "--limit", "20"]), "func"))
+
+
 if __name__ == "__main__":
     unittest.main()

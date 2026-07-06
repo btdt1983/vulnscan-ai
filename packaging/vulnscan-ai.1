@@ -126,6 +126,18 @@ Produce the plan but execute nothing.
 .TP
 .BI \-\-pdf " PATH"
 Write a PDF report after fixing.
+.SS audit
+Show the append\-only remediation audit log. Every fix actually applied (or
+rolled back), from the CLI or the web dashboard, is recorded as one JSON line in
+\fI<state-dir>/audit.log\fR (mode 0600) with a UTC timestamp, source
+(cli/dashboard), actor, result and the commands run. Dry\-run previews are not
+recorded. The log is independent of \fBfindings.json\fR and survives re\-scans.
+.TP
+.BI \-\-limit " N"
+Show the most recent \fBN\fR events (default 50; \fB0\fR = all).
+.TP
+.B \-\-json
+Emit the raw events as JSON.
 .SS report
 Render a report or export from the last saved scan. The output extension selects
 the format: \fI.pdf\fR, \fI.html\fR, \fI.json\fR, or \fI.sarif\fR.
@@ -259,7 +271,7 @@ System configuration.
 Per-user configuration (where the setup wizard saves its choice).
 .TP
 .I /var/lib/vulnscan-ai/
-State directory: findings.json, reports/, oval/.
+State directory: findings.json, audit.log, reports/, oval/.
 .SH "CONFIGURATION PRECEDENCE"
 Highest wins: command-line flags, then environment variables, then the per-user
 config, then the system config, then built-in defaults.

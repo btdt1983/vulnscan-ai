@@ -16,6 +16,7 @@ _vulnscan-ai() {
     'update-oval:download the OpenSCAP OVAL feed'
     'scheduled:non-interactive scan + dated report'
     'dashboard:serve saved findings over an HTTPS login dashboard'
+    'audit:show the remediation audit log (applied fixes & rollbacks)'
     'news:show recent vulnerability advisories (CISA KEV, NVD, errata)'
   )
   sev=(low moderate important critical)
@@ -93,6 +94,10 @@ _vulnscan-ai() {
             '--disable-fix[disable applying fixes from the dashboard UI, then exit]' \
             '--port[listen port]:port:' \
             '--bind[bind address]:address:' ;;
+        audit)
+          _arguments \
+            '--limit[how many recent events to show (0=all)]:n:' \
+            '--json[emit the raw events as JSON]' ;;
         news)
           _arguments \
             '--source[only one feed source]:source:(kev nvd distro)' \

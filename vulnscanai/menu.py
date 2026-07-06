@@ -500,6 +500,14 @@ def _b_dashboard(cfg) -> Optional[List[str]]:
     return argv
 
 
+def _b_audit(cfg) -> Optional[List[str]]:
+    limit = _ask("How many recent events to show (0 = all)", "50")
+    argv = ["audit"]
+    if limit and limit.lstrip("-").isdigit():
+        argv += ["--limit", limit]
+    return argv
+
+
 def _b_scheduled(cfg) -> Optional[List[str]]:
     argv = ["scheduled"]
     toks = _pick_scanners(cfg)
@@ -558,6 +566,7 @@ _TOP: List[Tuple[str, str]] = [
     ("Compliance benchmark (CIS / STIG / PCI-DSS)", "compliance"),
     ("Fix findings (AI-assisted, approval-gated)", "fix"),
     ("Roll back an applied fix", "rollback"),
+    ("Audit log (applied fixes & rollbacks)", "audit"),
     ("Report from the last scan", "report"),
     ("Advisories / news feed", "news"),
     ("Host, FIPS & scanner status", "info"),
@@ -573,6 +582,7 @@ _BUILDERS = {
     "compliance": _b_compliance,
     "fix": _b_fix,
     "rollback": _b_rollback,
+    "audit": _b_audit,
     "report": _b_report,
     "news": _b_news,
     "info": lambda cfg: ["info"],

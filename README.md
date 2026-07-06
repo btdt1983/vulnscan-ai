@@ -465,6 +465,9 @@ overridable.
   dashboard → Enable applying fixes* entry). Only then does the Apply button
   appear; `--disable-fix` turns it back off. (Login + the allow-list still gate
   access — and enabling it grants those users root-equivalent remediation power.)
+  Every applied fix — from the dashboard or the CLI — is written to an
+  append-only audit log (`vulnscan-ai audit`, stored `0600` in the state dir):
+  who changed what, when, from where, and how it turned out.
 
 Opening it to the network is two layers: the app allow-list **and** the host
 firewall. firewalld blocks the port by default — allow it only for your clients:

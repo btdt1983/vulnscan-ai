@@ -34,9 +34,12 @@ KEYFILE="RPM-GPG-KEY-techhack"
 # scoops up unrelated RPMs from the build tree. Add more tools deliberately,
 # e.g. PKG_GLOB='{vulnscan-ai,othertool}-*'.
 PKG_GLOB="${PKG_GLOB:-vulnscan-ai-*}"
-# Extra dist trees to also receive *noarch* packages, since a noarch build runs
-# unchanged on other EL versions (e.g. EXTRA_DISTS="el10" mirrors el9 noarch
-# RPMs into el10/). Arch-specific packages are never fanned out this way.
+# Extra dist trees to also receive *noarch* packages by plain copy. Use with
+# care: a pyproject/Python noarch package bakes the build interpreter's
+# versioned site-packages path into its file list, so an el9 build is NOT
+# importable on el10 (Python 3.12) even though it installs — build each EL
+# natively instead (see release.sh). Only mirror truly interpreter-independent
+# noarch content (e.g. data/config-only packages). Arch RPMs are never mirrored.
 EXTRA_DISTS="${EXTRA_DISTS:-}"
 
 for t in rpm rpmsign gpg createrepo_c; do

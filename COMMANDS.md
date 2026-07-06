@@ -17,6 +17,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 | [`scan`](#scan) | Scan for vulnerabilities; save findings; optional report/export. `--compliance` runs a CIS/STIG/PCI-DSS benchmark instead |
 | [`fix`](#fix) | Propose AI remediation and (with approval) apply it — transactional, with auto-rollback |
 | [`rollback`](#rollback) | Restore a previously-applied transactional fix from its backup |
+| [`audit`](#audit) | Show the append-only remediation audit log (applied fixes & rollbacks) |
 | [`report`](#report) | Render a report/export from the last saved scan |
 | [`providers`](#providers) | List AI providers and their readiness |
 | [`setup`](#setup) | First-run wizard: choose an offline model or a cloud provider + API key |
@@ -337,6 +338,36 @@ Restoring re-applies the service so its runtime state matches the restored confi
 
 ---
 
+## `audit`
+
+Show the **append-only remediation audit log**. Every fix that is actually
+applied — and every rollback — is recorded, whether it came from the CLI `fix`
+command or the web dashboard's **Apply fix** button. Each event is one JSON line
+in `<state-dir>/audit.log` (mode `0600`) capturing the UTC timestamp, source
+(`cli`/`dashboard`), actor, finding, result (`applied`/`failed`/`rolled-back`),
+the AI provider/model that generated the plan, and the commands that ran.
+Dry-run previews change nothing and are **not** logged.
+
+The log lives independently of `findings.json`, so a re-scan never overwrites
+your remediation history — it's the record of who changed what, when, and from
+where.
+
+```
+vulnscan-ai audit [--limit N] [--json]
+```
+
+| Option | Description |
+|---|---|
+| `--limit N` | Show the most recent `N` events (default `50`; `0` = all). |
+| `--json` | Emit the raw events as JSON (for piping into `jq`, SIEM ingest, etc.). |
+
+```bash
+vulnscan-ai audit                 # recent applied fixes & rollbacks
+vulnscan-ai audit --limit 0 --json | jq '.[] | select(.source=="dashboard")'
+```
+
+---
+
 ## `report`
 
 Render a report or machine-readable export from the **last saved scan**. The
@@ -527,7 +558,8 @@ dashboard → Enable applying fixes* entry) to make the Apply button appear (log
 + allow-list still apply). `--disable-fix` turns it back off; `--list` shows the
 current state. Enabling it grants anyone who can log into the dashboard
 root-equivalent remediation power, so keep the password strong and the allow-list
-tight.
+tight. Every fix applied from the dashboard is written to the
+[`audit`](#audit) log (with the login user as the actor).
 
 **Advisories tab.** A second tab shows recent vulnerability [news](#news) (CISA
 KEV, NVD, distro errata), refreshed in the background and cached so it works

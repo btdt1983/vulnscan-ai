@@ -608,6 +608,9 @@ def cmd_fix(cfg: Config, args) -> int:
         print(f"  {'(dry-run) ' if dry else ''}Applying ...")
         ok = remediation.apply(f, dry_run=dry, state_dir=cfg.state_dir,
                                on_step=_print_step)
+        if not dry:
+            from . import audit
+            audit.record(cfg, f, event="apply", source="cli")
         applied += 1 if ok else 0
         if f.remediation and f.remediation.rolled_back:
             rolled += 1
@@ -658,11 +661,45 @@ def cmd_rollback(cfg: Config, args) -> int:
         return 1
     print(f"Rolling back {args.id}: {target.title}")
     ok = remediation.restore_backup(target)
+    from . import audit
+    audit.record(cfg, target, event="rollback", source="cli")
     for r in (target.remediation.apply_results if target.remediation else []):
         print(f"    [{r['status']}] {r['command']}")
     _save_findings(cfg, findings)
     print("Rollback complete." if ok else "Rollback failed.")
     return 0 if ok else 1
+
+
+def cmd_audit(cfg: Config, args) -> int:
+    """Show the append-only remediation audit log (applied fixes + rollbacks)."""
+    import json
+    from . import audit
+    events = audit.read(cfg, limit=args.limit)
+    if args.json:
+        print(json.dumps(events, indent=2))
+        return 0
+    if not events:
+        print(f"No audit events yet ({audit.audit_log_path(cfg)}).")
+        print("Fixes applied via 'fix' or the dashboard are recorded here.")
+        return 0
+    color = _use_color()
+    print(f"Remediation audit log ({audit.audit_log_path(cfg)}):\n")
+    print(f"{'WHEN (UTC)':<20} {'SOURCE':<9} {'ACTOR':<12} {'RESULT':<11} FINDING")
+    for e in events:
+        result = str(e.get("result", "?"))
+        tag = f"{result:<11}"
+        if color:
+            ansi = {"applied": "\033[32m", "rolled-back": "\033[33m",
+                    "failed": "\033[31m"}.get(result, "")
+            if ansi:
+                tag = ansi + tag + _RESET
+        title = str(e.get("title", ""))
+        if len(title) > 44:
+            title = title[:43] + "…"
+        print(f"{str(e.get('ts','')):<20} {str(e.get('source','')):<9} "
+              f"{str(e.get('actor',''))[:12]:<12} {tag} "
+              f"{e.get('finding_id','')}  {title}")
+    return 0
 
 
 def cmd_report(cfg: Config, args) -> int:
@@ -1055,6 +1092,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--bind",
                     help="bind address (default: 127.0.0.1; auto 0.0.0.0 with an allow-list)")
     sp.set_defaults(func=cmd_dashboard)
+
+    sp = sub.add_parser("audit",
+                        help="show the remediation audit log (applied fixes + rollbacks)")
+    sp.add_argument("--limit", type=int, default=50,
+                    help="how many recent events to show (default 50; 0 = all)")
+    sp.add_argument("--json", action="store_true",
+                    help="emit the raw events as JSON")
+    sp.set_defaults(func=cmd_audit)
     return p
 
 

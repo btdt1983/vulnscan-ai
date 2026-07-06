@@ -1,26 +1,91 @@
 name: release
 
-# Build, sign, and publish to the signed dnf repo on a version tag.
-# Runs on a SELF-HOSTED runner that lives on (or can reach) the repo host and
-# holds the production signing key (passphrase-protected software key today;
-# an OpenPGP smartcard / HSM remains the eventual goal — see the PIN step).
+# On a version tag: verify (on GitHub-hosted runners) that the tagged commit
+# builds a portable noarch RPM that INSTALLS and runs on every supported EL
+# release. This never waits on a self-hosted runner, so a tag push no longer
+# leaves a job queued forever.
+#
+# The canonical build-sign-publish is still `packaging/release.sh` run on the
+# repo host (it holds the passphrase-protected production signing key). The
+# self-hosted `publish` job below is kept wired up for the eventual HSM-backed
+# automated path, but is OPT-IN: it only runs on a manual workflow_dispatch and
+# is skipped on tag pushes, so it can't hang the release.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 jobs:
+  # ---------------------------------------------------------------- #
+  # Build + install + smoke test on each supported EL. The install step
+  # is what proves the noarch package is genuinely portable — it catches
+  # e.g. an exact `python(abi)` pin that would make it uninstallable on a
+  # newer EL (EL10 ships Python 3.12, EL9 ships 3.9).
+  # ---------------------------------------------------------------- #
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['almalinux:9', 'almalinux:10']
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches packaged version
+        if: github.event_name == 'push'
+        run: |
+          v=$(awk -F'= *' '/^version *=/{gsub(/[[:space:]]/,"",$2);print $2;exit}' setup.cfg)
+          [ "${GITHUB_REF_NAME#v}" = "$v" ] || { echo "tag ${GITHUB_REF_NAME} != packaged version $v"; exit 1; }
+
+      - name: Install build tooling
+        run: |
+          # pyproject-rpm-macros / python3-wheel live in CRB, off by default.
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
+          dnf -y install rpm-build rpmdevtools python3-devel \
+            pyproject-rpm-macros systemd-rpm-macros \
+            python3-setuptools python3-wheel python3-pip
+          rpmdev-setuptree
+
+      - name: Build RPM (runs the %check unit tests on this EL's Python)
+        run: bash packaging/build-rpm.sh
+
+      - name: Install and smoke test (must install on this EL)
+        run: |
+          rpm=$(find ~/rpmbuild/RPMS -name 'vulnscan-ai-*.noarch.rpm' | head -1)
+          echo "installing $rpm"
+          dnf -y install "$rpm"
+          vulnscan-ai --version
+          vulnscan-ai info
+          # openscap-scanner is a hard dep, so the oscap binary must now exist
+          command -v oscap
+          test -f /usr/lib/systemd/system/vulnscan-ai.timer
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnscan-ai-rpm-${{ matrix.image }}
+          path: ~/rpmbuild/RPMS/noarch/*.rpm
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- #
+  # Sign + publish to the signed dnf repo. Needs the self-hosted runner
+  # on the repo host + the signing passphrase secret, so it is OPT-IN
+  # (manual dispatch only) and skipped on tag pushes. Label the repo-host
+  # runner [self-hosted, linux, vulnscan-ai-repo] and set the secrets/vars
+  # to use it.
+  # ---------------------------------------------------------------- #
   publish:
-    # Label your repo-host runner with these (Settings -> Actions -> Runners).
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
     runs-on: [self-hosted, linux, vulnscan-ai-repo]
     env:
       REPO_ROOT: /srv/repo
       REPO_BASEURL: https://repo.techhack.nl
-      # Build targets. el8 needs the python39 module (default python3 is 3.6);
-      # see README before enabling it.
       DISTS: el9
-      # noarch package is mirrored into these EL trees with no rebuild.
+      # noarch package is mirrored into these EL trees (portable — no rebuild).
       EXTRA_DISTS: el10
-      # Signing identity = the production key imported on the runner.
       VULNSCANAI_GPG_EMAIL: ${{ vars.SIGNING_EMAIL }}
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
@@ -32,10 +97,6 @@ jobs:
           [ "${GITHUB_REF_NAME#v}" = "$v" ] || { echo "tag != version $v"; exit 1; }
 
       - name: Provision the signing passphrase (so signing is non-interactive)
-        # Software key: stage the passphrase secret into a 0600 file that
-        # make-repo.sh reads via VULNSCANAI_GPG_PASSPHRASE_FILE.
-        # Hardware key (future): instead preset the card's user PIN for the
-        # signing keygrip — `gpg-preset-passphrase --preset <KEYGRIP> <<< $PIN`.
         run: |
           umask 077
           printf '%s' "${{ secrets.SIGNING_PASSPHRASE }}" > "$RUNNER_TEMP/signing.pass"
