@@ -239,6 +239,12 @@ Ask the AI provider to propose remediation for saved (or freshly scanned)
 findings, then apply with approval. Proposed commands are screened against a
 safety deny-list; nothing runs without confirmation unless `--yes`.
 
+Commands run **without a shell** (no injection surface), so a step that needs a
+shell — a redirect, pipe, `&&` chain or `$( )` substitution, e.g. writing a
+systemd drop-in with `echo … > file` — is **blocked** rather than silently doing
+nothing. Export such a fix with `--export-script` / `--export-ansible` and run
+that in a real shell instead.
+
 **Transactional fixes.** When a plan touches a config file or service (it
 declares `backup_paths`/`service`/`validate_cmd`), `fix` runs it transactionally:
 it snapshots the file(s), applies the change, **validates the config before

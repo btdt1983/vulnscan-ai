@@ -263,6 +263,68 @@ class TestTransactionalApply(unittest.TestCase):
         self.assertFalse(ok)                       # surfaced as not applied
         self.assertFalse(f.remediation.applied)
 
+    def test_shell_redirect_command_is_blocked(self):
+        # A file-writing fix (echo > file) cannot run under the no-shell runner;
+        # it must be blocked, not silently no-op'd into a false success.
+        for bad in ["echo '[Service]' > /etc/systemd/system/x.d/10.conf",
+                    "sysctl -w x=1 | tee /etc/sysctl.d/x.conf",
+                    "a && b", "echo $(hostname)", "echo `id`"]:
+            self.assertIsNotNone(screen_command(bad), bad)
+        # ordinary fix commands stay allowed
+        for ok in ["sed -i s/a/b/ /etc/ssh/sshd_config",
+                   "dnf update -y --advisory=RHSA-2024:1",
+                   "firewall-cmd --remove-port=6379/tcp",
+                   "find /var/www -name '*.bak' -delete"]:
+            self.assertIsNone(screen_command(ok), ok)
+
+    def test_transactional_redirect_fix_does_not_falsely_succeed(self):
+        # Regression: a systemd/ssh fix that writes a drop-in via a redirect used
+        # to run `echo` with '>' as a literal arg (no file written, exit 0) and
+        # report "applied". It must now abort as blocked, touching nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "sshd_config")
+            f, _ = self._tx_finding(
+                tmp, commands=["echo 'PermitRootLogin no' > " + target],
+                validate_cmd="true", service=None)
+            ok = apply(f, dry_run=False, state_dir=tmp)
+            self.assertFalse(ok)
+            self.assertFalse(f.remediation.applied)
+            self.assertEqual(f.remediation.apply_results[0]["status"], "blocked")
+            self.assertEqual(open(target).read().strip(), "ORIGINAL")
+
+    def test_manual_restore_reports_failure_truthfully(self):
+        # restore_backup must NOT claim success when the backup is unrestorable
+        # (missing manifest) — otherwise the CLI prints "complete" and the audit
+        # log records a rollback that never happened.
+        f = _finding(source="ssh", package=None, cve_ids=[], title="weak sshd")
+        f.remediation = Remediation(backup_paths=["/etc/ssh/sshd_config"])
+        f.remediation.backup_dir = "/nonexistent/backup/dir"
+        self.assertFalse(restore_backup(f))
+        self.assertFalse(f.remediation.rolled_back)
+        self.assertEqual(f.remediation.apply_results[-1]["status"], "error")
+
+    def test_auto_rollback_surfaces_incomplete_restore(self):
+        # When the file restore during an auto-rollback errors, an explicit
+        # ROLLBACK INCOMPLETE error step must be recorded (half-reverted host).
+        import vulnscanai.remediation as R
+        orig = R._restore
+        R._restore = lambda d: [{"command": "restore x", "status": "error",
+                                 "detail": "boom"}]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = os.path.join(tmp, "sshd_config")
+                f, _ = self._tx_finding(
+                    tmp, commands=["sed -i s/ORIGINAL/MODIFIED/ " + target],
+                    validate_cmd="false")   # force rollback
+                ok = apply(f, dry_run=False, state_dir=tmp)
+                self.assertFalse(ok)
+                self.assertTrue(f.remediation.rolled_back)
+                self.assertTrue(any(
+                    r["command"] == "ROLLBACK INCOMPLETE" and r["status"] == "error"
+                    for r in f.remediation.apply_results))
+        finally:
+            R._restore = orig
+
     def test_rollback_runs_daemon_reload_before_restart(self):
         # systemd drop-ins only take effect after daemon-reload; the rollback
         # must reload before restarting. Uses a guaranteed-nonexistent unit so

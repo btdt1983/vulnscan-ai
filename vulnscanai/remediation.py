@@ -123,11 +123,37 @@ _DENY_PATTERNS = [
 _DENY_RE = [re.compile(p) for p in _DENY_PATTERNS]
 
 
+# Shell operators that change what a command does but are meaningless to our
+# no-shell runner (subprocess without shell=True). A model that emits e.g.
+# `echo "[Service]..." > /etc/systemd/system/x.d/10.conf` would, under
+# shlex.split, run `echo` with `>` as a literal argument: nothing is written,
+# exit 0 — a silent no-op that would otherwise be reported as a successful fix.
+# We refuse such commands so the failure is honest (export them with
+# `fix --export-script`/`--export-ansible` to run them in a real shell instead).
+_SHELL_OP_TOKENS = {">", ">>", ">|", "<", "<<", "<<<", "|", "|&", "||", "&&", "&"}
+
+
+def _needs_shell(cmd: str) -> bool:
+    """True if the command relies on shell features our runner does not provide
+    (redirection, pipes, command substitution, chaining)."""
+    if "`" in cmd or "$(" in cmd or "${" in cmd:
+        return True
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return True                      # unbalanced quotes: can't run safely
+    return any(t in _SHELL_OP_TOKENS for t in toks)
+
+
 def screen_command(cmd: str) -> Optional[str]:
     """Return a reason string if the command is disallowed, else None."""
     for rx in _DENY_RE:
         if rx.search(cmd):
             return f"blocked by safety policy (matched /{rx.pattern}/)"
+    if _needs_shell(cmd):
+        return ("blocked: uses a shell redirect/pipe/substitution, which the "
+                "no-shell runner cannot execute as written — export it with "
+                "'fix --export-script' to run it in a real shell")
     return None
 
 
@@ -409,6 +435,13 @@ def _restore(backup_dir: str) -> List[Dict[str, object]]:
     return out
 
 
+def _restore_clean(results: List[Dict[str, object]]) -> bool:
+    """True if a restore result set represents a fully successful rollback:
+    at least one step ran and none errored (a missing manifest or a failed
+    per-file copy shows up as status 'error')."""
+    return bool(results) and all(r.get("status") != "error" for r in results)
+
+
 def _is_transactional(rem: Remediation) -> bool:
     return bool(rem.backup_paths or rem.service or rem.validate_cmd
                 or rem.rollback_commands)
@@ -517,9 +550,12 @@ def _apply_transactional(finding: Finding, dry_run: bool,
 
     def _rollback(reason: str) -> bool:
         emit({"command": "ROLLBACK", "status": "rolled-back", "detail": reason})
+        restore_clean = True
         if rem.backup_dir:
-            for r in _restore(rem.backup_dir):
+            restore_res = _restore(rem.backup_dir)
+            for r in restore_res:
                 emit(r)
+            restore_clean = _restore_clean(restore_res)
         for rc in rem.rollback_commands:
             if not screen_command(rc):
                 emit(_run(rc))
@@ -528,6 +564,14 @@ def _apply_transactional(finding: Finding, dry_run: bool,
         if rem.service and rem.restart_mode in ("reload", "restart"):
             emit(_run("systemctl daemon-reload"))
             emit(_systemctl(rem.restart_mode, rem.service))
+        # If the file restore itself errored, the host may be in a half-reverted
+        # state — surface it loudly rather than reporting a clean rollback.
+        if not restore_clean:
+            emit({"command": "ROLLBACK INCOMPLETE",
+                  "status": "error",
+                  "detail": "one or more files could not be restored — "
+                            "inspect the backup dir and fix manually: "
+                            f"{rem.backup_dir}"})
         rem.applied = False
         rem.rolled_back = True
         return False
@@ -570,15 +614,31 @@ def restore_backup(finding: Finding) -> bool:
     """Manually roll back a previously-applied transactional fix.
 
     Used by the `rollback` CLI command. Restores the snapshot and re-applies the
-    service so its runtime state matches the restored config.
+    service so its runtime state matches the restored config. Returns True only
+    when the files were actually restored (and the service, if any, came back
+    healthy); on a failed/partial restore it returns False and leaves
+    ``rolled_back`` False so the caller and the audit log don't report a rollback
+    that did not happen.
     """
     rem = finding.remediation
     if rem is None or not rem.backup_dir:
         return False
-    rem.apply_results = _restore(rem.backup_dir)
+    restore_res = _restore(rem.backup_dir)
+    rem.apply_results = list(restore_res)
+    restore_clean = _restore_clean(restore_res)
+    service_ok = True
     if rem.service and rem.restart_mode in ("reload", "restart"):
         rem.apply_results.append(_run("systemctl daemon-reload"))
-        rem.apply_results.append(_systemctl(rem.restart_mode, rem.service))
-    rem.rolled_back = True
-    rem.applied = False
-    return True
+        sc = _systemctl(rem.restart_mode, rem.service)
+        rem.apply_results.append(sc)
+        service_ok = sc.get("status") == "ok"
+    ok = restore_clean and service_ok
+    if not ok:
+        rem.apply_results.append({
+            "command": "ROLLBACK INCOMPLETE", "status": "error",
+            "detail": ("restore did not complete cleanly — inspect the backup "
+                       f"dir and fix manually: {rem.backup_dir}")})
+    rem.rolled_back = ok
+    if ok:
+        rem.applied = False
+    return ok
