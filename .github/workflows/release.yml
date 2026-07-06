@@ -26,7 +26,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['almalinux:9', 'almalinux:10']
+        include:
+          - {image: 'almalinux:9',  el: el9}
+          - {image: 'almalinux:10', el: el10}
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
@@ -46,6 +48,9 @@ jobs:
           dnf -y install rpm-build rpmdevtools python3-devel \
             pyproject-rpm-macros systemd-rpm-macros \
             python3-setuptools python3-wheel python3-pip
+          # %pyproject_buildrequires needs tomli only on Python < 3.11 (EL9);
+          # EL10 has stdlib tomllib, and the package may be absent there.
+          dnf -y install python3-tomli || true
           rpmdev-setuptree
 
       - name: Build RPM (runs the %check unit tests on this EL's Python)
@@ -65,7 +70,7 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vulnscan-ai-rpm-${{ matrix.image }}
+          name: vulnscan-ai-rpm-${{ matrix.el }}
           path: ~/rpmbuild/RPMS/noarch/*.rpm
           if-no-files-found: error
 
