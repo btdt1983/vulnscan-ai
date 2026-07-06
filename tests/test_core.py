@@ -2650,5 +2650,73 @@ class TestParserRobustness(unittest.TestCase):
             container.classify_mount(src, True)
 
 
+class TestNeverCrash(unittest.TestCase):
+    """The CLI must degrade with a readable message, never a raw traceback, on
+    corrupt state/config or an unexpected error deep in a command."""
+
+    def test_config_load_ignores_corrupt_file(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "config.json")
+            open(bad, "w").write("{ this is not json")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                cfg = Config.load(bad)            # must not raise
+            self.assertEqual(cfg.provider, "claude")   # fell back to defaults
+            self.assertIn("ignoring unreadable config", err.getvalue())
+
+    def test_config_load_ignores_non_object_json(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as d:
+            bad = os.path.join(d, "config.json")
+            open(bad, "w").write('["a", "list", "not an object"]')
+            with contextlib.redirect_stderr(io.StringIO()):
+                cfg = Config.load(bad)
+            self.assertEqual(cfg.provider, "claude")
+
+    def test_findings_from_json_shape_guard(self):
+        self.assertEqual(findings_from_json('{"not": "a list"}'), [])
+        # a list with stray non-object entries keeps the good ones
+        good = findings_from_json('[{"source": "dnf", "title": "x"}, 5, null, "s"]')
+        self.assertEqual(len(good), 1)
+        self.assertEqual(good[0].source, "dnf")
+
+    def test_load_findings_on_corrupt_file_degrades(self):
+        from vulnscanai.cli import _load_findings
+        import contextlib
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            open(cfg.findings_path, "w").write("garbage{not json")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(_load_findings(cfg), [])   # no raise
+            self.assertIn("Could not read findings", err.getvalue())
+
+    def test_load_cache_non_dict_degrades(self):
+        from vulnscanai import feeds
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(state_dir=d)
+            open(feeds._cache_path(cfg), "w").write('["not", "a", "dict"]')
+            self.assertEqual(feeds.load_cache(cfg), ([], ""))
+
+    def test_main_catch_all_no_traceback(self):
+        import contextlib
+        import vulnscanai.cli as C
+        orig = C.cmd_providers
+        C.cmd_providers = lambda cfg, args: (_ for _ in ()).throw(
+            RuntimeError("boom"))
+        os.environ.pop("VULNSCANAI_DEBUG", None)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                rc = C.main(["--no-banner", "providers"])
+            self.assertEqual(rc, 1)
+            self.assertIn("unexpected error", err.getvalue())
+            # with the debug switch it re-raises for development
+            os.environ["VULNSCANAI_DEBUG"] = "1"
+            with self.assertRaises(RuntimeError):
+                C.main(["--no-banner", "providers"])
+        finally:
+            C.cmd_providers = orig
+            os.environ.pop("VULNSCANAI_DEBUG", None)
+
+
 if __name__ == "__main__":
     unittest.main()

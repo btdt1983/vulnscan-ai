@@ -512,7 +512,10 @@ def load_cache(cfg):
             data = json.load(fh)
     except (OSError, ValueError):
         return [], ""
-    items = [NewsItem.from_dict(d) for d in data.get("items", [])]
+    if not isinstance(data, dict):
+        return [], ""
+    items = [NewsItem.from_dict(d) for d in (data.get("items") or [])
+             if isinstance(d, dict)]
     return items, str(data.get("fetched_at", ""))
 
 

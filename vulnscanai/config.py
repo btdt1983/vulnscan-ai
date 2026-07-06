@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -89,8 +90,19 @@ class Config:
         candidates = [path] if path else CONFIG_PATHS
         for p in candidates:
             if p and os.path.isfile(p):
-                with open(p, "r", encoding="utf-8") as fh:
-                    data.update(json.load(fh))
+                # A corrupt or unreadable config file must not brick every
+                # command: warn and fall back to defaults / the other files.
+                try:
+                    with open(p, "r", encoding="utf-8") as fh:
+                        loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        data.update(loaded)
+                    else:
+                        print(f"warning: ignoring config {p}: not a JSON object",
+                              file=sys.stderr)
+                except (OSError, ValueError) as exc:
+                    print(f"warning: ignoring unreadable config {p}: {exc}",
+                          file=sys.stderr)
         cfg = cls(**{k: v for k, v in data.items()
                      if k in cls.__dataclass_fields__})  # type: ignore[attr-defined]
         # Merge a newline-delimited baseline file (one pattern per line).

@@ -474,4 +474,10 @@ def findings_to_json(findings: List[Finding], indent: int = 2) -> str:
 
 
 def findings_from_json(text: str) -> List[Finding]:
-    return [Finding.from_dict(d) for d in json.loads(text)]
+    # json.loads raises ValueError on corrupt text (callers handle that); guard
+    # the shape so a valid-but-wrong-shape file (e.g. an object, or a list with
+    # stray non-object entries) degrades to what is parseable instead of crashing.
+    data = json.loads(text)
+    if not isinstance(data, list):
+        return []
+    return [Finding.from_dict(d) for d in data if isinstance(d, dict)]

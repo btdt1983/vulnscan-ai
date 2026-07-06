@@ -246,8 +246,13 @@ def _load_findings(cfg: Config) -> List[Finding]:
     if not os.path.isfile(cfg.findings_path):
         _eprint(f"No saved findings at {cfg.findings_path}. Run 'scan' first.")
         return []
-    with open(cfg.findings_path, "r", encoding="utf-8") as fh:
-        return findings_from_json(fh.read())
+    try:
+        with open(cfg.findings_path, "r", encoding="utf-8") as fh:
+            return findings_from_json(fh.read())
+    except (OSError, ValueError) as exc:
+        _eprint(f"Could not read findings ({cfg.findings_path}): {exc}. "
+                f"Re-run 'scan' to rebuild it.")
+        return []
 
 
 def _load_findings_silent(cfg: Config) -> List[Finding]:
@@ -915,7 +920,7 @@ def cmd_news(cfg: Config, args) -> int:
         with open(cfg.findings_path, encoding="utf-8") as fh:
             relevant = {c.upper() for f in findings_from_json(fh.read())
                         for c in (f.cve_ids or [])}
-    except OSError:
+    except (OSError, ValueError):
         pass
     color = _use_color()
     print(f"Advisories (updated {fetched_at or 'never'}):\n")
@@ -1116,49 +1121,55 @@ def _apply_overrides(cfg: Config, args) -> None:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
-    cfg = Config.load(args.config)
-    _apply_overrides(cfg, args)
-
-    if getattr(args, "no_banner", False):
-        os.environ["VULNSCANAI_NO_BANNER"] = "1"
-    # The interactive menu draws the banner itself (as a header that survives the
-    # curses screen clear), so skip the pre-print for it to avoid a double banner.
-    command = getattr(args, "command", None)
-    opening_menu = command == "menu" or (not command and sys.stdin.isatty()
-                                         and sys.stdout.isatty())
-    if not opening_menu:
-        print_banner(command, _hostname())
-
-    # First run on an interactive terminal: offer the offline-model wizard,
-    # then reload config so the just-made choice applies to this command.
-    from .wizard import should_offer_setup, run_setup
-    if should_offer_setup(cfg, getattr(args, "command", None)):
-        run_setup(cfg)
+    args = parser.parse_args(argv)   # argparse exits via SystemExit on bad args
+    # Everything past argument parsing runs under a last-resort guard so the tool
+    # degrades with a readable message instead of dumping a traceback — this is a
+    # security tool that changes systems; an operator must never be left staring
+    # at a stack trace. VULNSCANAI_DEBUG=1 re-raises for development.
+    try:
         cfg = Config.load(args.config)
         _apply_overrides(cfg, args)
 
-    # No subcommand: open the interactive menu on a real terminal, otherwise
-    # (pipes, scripts, cron) show help and exit non-zero.
-    if not getattr(args, "command", None):
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            from .menu import run_menu
-            try:
-                return run_menu(cfg, parser)
-            except KeyboardInterrupt:
-                _eprint("\nInterrupted.")
-                return 130
-        parser.print_help()
-        return 1
+        if getattr(args, "no_banner", False):
+            os.environ["VULNSCANAI_NO_BANNER"] = "1"
+        # The interactive menu draws the banner itself (as a header that survives
+        # the curses screen clear), so skip the pre-print for it (no double).
+        command = getattr(args, "command", None)
+        opening_menu = command == "menu" or (not command and sys.stdin.isatty()
+                                             and sys.stdout.isatty())
+        if not opening_menu:
+            print_banner(command, _hostname())
 
-    try:
+        # First run on an interactive terminal: offer the offline-model wizard,
+        # then reload config so the just-made choice applies to this command.
+        from .wizard import should_offer_setup, run_setup
+        if should_offer_setup(cfg, command):
+            run_setup(cfg)
+            cfg = Config.load(args.config)
+            _apply_overrides(cfg, args)
+
+        # No subcommand: open the interactive menu on a real terminal, otherwise
+        # (pipes, scripts, cron) show help and exit non-zero.
+        if not command:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                from .menu import run_menu
+                return run_menu(cfg, parser)
+            parser.print_help()
+            return 1
+
         return args.func(cfg, args)
-    except ProviderError as exc:
-        _eprint(f"AI provider error: {exc}")
-        return 2
     except KeyboardInterrupt:
         _eprint("\nInterrupted.")
         return 130
+    except ProviderError as exc:
+        _eprint(f"AI provider error: {exc}")
+        return 2
+    except Exception as exc:  # noqa: BLE001 -- last resort: no raw tracebacks
+        if os.environ.get("VULNSCANAI_DEBUG"):
+            raise
+        _eprint(f"vulnscan-ai: unexpected error: {type(exc).__name__}: {exc}")
+        _eprint("Set VULNSCANAI_DEBUG=1 to see the full traceback.")
+        return 1
 
 
 if __name__ == "__main__":
