@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.3
+Version:        0.4.4
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -35,6 +35,10 @@ Requires:       openscap-scanner
 # content we don't consume). Auto-installed on normal RHEL via weak deps.
 Recommends:     python3-reportlab
 Recommends:     scap-security-guide
+# dnf-utils ships `needs-restarting`, the authoritative reboot verdict the
+# effective-state scanner uses; it degrades to stdlib /proc + kernel checks
+# without it.
+Recommends:     dnf-utils
 # Pulls in /usr/lib/sysusers.d handling on EL9.
 %{?sysusers_requires_compat}
 
@@ -112,6 +116,21 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jul 07 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.4-1
+- Effective-state scanner (`effective`): a patch on disk is not a patch in RAM.
+  Reports what the RUNNING system is still using — a host on an older kernel than
+  the one installed (package scanners call it patched the moment the RPM lands,
+  but you keep executing the vulnerable kernel until you reboot; severity
+  important), and services still mapping a deleted/replaced library (restart to
+  load the fix). Pure stdlib via /proc + rpm; uses dnf-utils' `needs-restarting
+  -r` as the authoritative reboot verdict when present (now a Recommends). A
+  membership check avoids false positives on kernel-rt/debug hosts.
+- `fix` now overwrites a package fix's `requires_reboot` with this ground truth
+  after applying, so the "reboot required" note is a fact, not an AI guess.
+- Safety: `reboot`/`shutdown`/`poweroff`/`halt`/`kexec`/`init 0,6`/`systemctl
+  reboot` are on the remediation deny-list — a fix never takes the host down
+  itself; rebooting stays the operator's call.
+
 * Tue Jul 07 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.3-1
 - Offline deterministic remediation catalog: `fix` now works fully air-gapped.
   Package/advisory findings (dnf/oscap) are planned locally as a scoped
