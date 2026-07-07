@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.2
+Version:        0.4.3
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -112,6 +112,24 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jul 07 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.3-1
+- Offline deterministic remediation catalog: `fix` now works fully air-gapped.
+  Package/advisory findings (dnf/oscap) are planned locally as a scoped
+  `dnf update -y --advisory=<id>` (or `dnf update -y <package>`) with NO AI call
+  and no network, so a host with no provider configured is no longer a dead end
+  and package fixes are reproducible (same finding -> same plan). The AI is
+  reserved for config/service findings that need reasoning.
+  * New `vulnscanai/catalog.py`; `remediation.propose_all` is catalog-first by
+    default. New `fix --offline` (catalog only, never call a provider) and
+    `fix --no-catalog` (AI for everything) flags, and `offline_catalog` config
+    key (default true; `--offline` overrides it).
+  * Command construction is injection-safe: the advisory is accepted only on a
+    full-string match and the package name is allowlist-validated, so a crafted
+    finding cannot inject extra dnf arguments.
+  * The web dashboard's apply-fix is catalog-first too; `cmd_scheduled --plan`
+    produces a deterministic plan offline. Findings with no offline plan are
+    surfaced and skipped (never falsely reported as applied).
+
 * Mon Jul 06 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.2-1
 - Structured file writes: config/drop-in fixes apply in-process again. A fix that
   creates or replaces a file (e.g. a systemd hardening drop-in) now carries the
