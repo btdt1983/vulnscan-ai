@@ -27,7 +27,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Decision | Choice |
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
-| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container` |
+| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container`. Runtime posture: `effective` (reboot/restart still pending) |
 | Prioritisation | **CISA KEV** (actively exploited) + **EPSS** exploit-probability on every finding |
 | Compliance | **CIS / STIG / PCI-DSS / HIPAA** benchmarks via OpenSCAP XCCDF (`scan --compliance`): score + failing rules + dashboard tab |
 | Advisories | `news` command + dashboard tab: CISA KEV, NVD, distro errata (cached, offline-friendly) |
@@ -289,6 +289,16 @@ The scanners are built to avoid noise:
   capabilities, disabled seccomp/SELinux). Benign bind mounts are ignored,
   read-only mounts are downgraded a step, and `--privileged` is reported once
   rather than as a flood of per-capability findings.
+- **`effective`** catches what a patch on disk leaves running in RAM: a host
+  still on an **older kernel** than the one installed (the package scanners
+  report it patched the moment the RPM lands, but you keep executing the
+  vulnerable kernel until you reboot), and services still mapping a **deleted/
+  replaced library** (`libssl` updated but the running process holds the old
+  code — restart to load the fix). Pure stdlib via `/proc` + `rpm`; uses
+  `needs-restarting -r` (dnf-utils) as the authoritative reboot verdict when
+  present. `fix` also **overwrites a package fix's `requires_reboot` with this
+  ground truth** after applying, so the "reboot required" note is a fact, not a
+  guess. Run it with `--scanner effective` or `--all`.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

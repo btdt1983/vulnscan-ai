@@ -3150,5 +3150,189 @@ class TestOfflineCatalog(unittest.TestCase):
         self.assertIn("dnf update -y --advisory=RHSA-2026:8", out)
 
 
+class TestEffectiveState(unittest.TestCase):
+    """The effective-state scanner: reboot/restart posture from /proc + rpm,
+    all detection logic unit-testable without touching the real host."""
+
+    def _es(self):
+        import vulnscanai.scanners.effective_state as es
+        return es
+
+    def test_registered_in_scanners(self):
+        from vulnscanai.scanners import SCANNERS
+        self.assertIn("effective", SCANNERS)
+
+    def test_parse_deleted_libs_filters_non_libraries(self):
+        es = self._es()
+        maps = (
+            "7f00-7f10 r-xp 0 fd:00 123  /usr/lib64/libssl.so.3.1.4 (deleted)\n"
+            "7f20-7f30 r-xp 0 fd:00 124  /usr/lib64/libc.so.6 (deleted)\n"
+            "7f40-7f50 rw-p 0 00:00 0    /dev/zero (deleted)\n"
+            "7f60-7f70 r--p 0 fd:00 125  /memfd:something (deleted)\n"
+            "7f80-7f90 r-xp 0 fd:00 126  /usr/bin/nginx (deleted)\n"   # exe, no .so
+            "7fa0-7fb0 r-xp 0 fd:00 127  /usr/lib64/libcrypto.so.3\n"  # not deleted
+        )
+        self.assertEqual(es._parse_deleted_libs(maps),
+                         {"libssl.so.3.1.4", "libc.so.6"})
+
+    def test_is_core_lib(self):
+        es = self._es()
+        self.assertTrue(es._is_core_lib("libc.so.6"))
+        self.assertTrue(es._is_core_lib("libsystemd.so.0"))
+        self.assertFalse(es._is_core_lib("libssl.so.3"))
+
+    def test_parse_unit_from_cgroup(self):
+        es = self._es()
+        self.assertEqual(
+            es._parse_unit_from_cgroup("0::/system.slice/sshd.service"),
+            "sshd.service")
+        self.assertIsNone(es._parse_unit_from_cgroup(
+            "0::/user.slice/user-1000.slice/session-1.scope"))
+        self.assertIsNone(es._parse_unit_from_cgroup(
+            "0::/machine.slice/libpod-abc.scope"))     # container -> skipped
+        self.assertIsNone(es._parse_unit_from_cgroup("0::/init.scope"))
+
+    def test_kernel_outdated_membership_guard(self):
+        # Only flags when the running kernel is a KNOWN installed build that is
+        # not the newest — a custom/rt kernel (not in the set) is never flagged.
+        from unittest import mock
+        es = self._es()
+        with mock.patch.object(es, "running_kernel", return_value="5.14.0-1.el9.x86_64"), \
+             mock.patch.object(es, "installed_kernels",
+                               return_value=["5.14.0-9.el9.x86_64", "5.14.0-1.el9.x86_64"]):
+            self.assertTrue(es._kernel_outdated())      # older, and installed
+        with mock.patch.object(es, "running_kernel", return_value="5.14.0-9.el9.x86_64"), \
+             mock.patch.object(es, "installed_kernels",
+                               return_value=["5.14.0-9.el9.x86_64"]):
+            self.assertFalse(es._kernel_outdated())     # running the newest
+        with mock.patch.object(es, "running_kernel", return_value="5.14.0-rt99.el9.x86_64"), \
+             mock.patch.object(es, "installed_kernels",
+                               return_value=["5.14.0-9.el9.x86_64"]):
+            self.assertFalse(es._kernel_outdated())     # rt kernel not in set
+
+    def test_scan_outdated_kernel_important(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=True), \
+             mock.patch.object(es, "running_kernel", return_value="5.14.0-1.el9.x86_64"), \
+             mock.patch.object(es, "newest_installed_kernel", return_value="5.14.0-9.el9.x86_64"), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None):
+            fs = s.scan()
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].severity, "important")
+        self.assertEqual(fs[0].raw["category"], "reboot-kernel")
+        self.assertEqual(fs[0].package, "kernel")
+        self.assertEqual(fs[0].installed_version, "5.14.0-1.el9.x86_64")
+        self.assertEqual(fs[0].fixed_version, "5.14.0-9.el9.x86_64")
+
+    def test_scan_needs_restarting_false_suppresses_kernel(self):
+        # An authoritative "no reboot" overrides the kernel-string heuristic.
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=True), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=False):
+            fs = s.scan()
+        self.assertEqual(fs, [])
+
+    def test_scan_core_reboot_when_kernel_current(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc", return_value=(True, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=True):
+            fs = s.scan()
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].raw["category"], "reboot-core")
+
+    def test_scan_service_restart_finding(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc",
+                               return_value=(False, {"nginx.service": {"libssl.so.3"}})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None):
+            fs = s.scan()
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].raw["category"], "restart-service")
+        self.assertIn("systemctl restart nginx.service", fs[0].description)
+
+    def test_scan_service_overflow_capped(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        units = {f"svc{i}.service": {"libz.so.1"} for i in range(30)}
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, units)), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None):
+            fs = s.scan()
+        # 25 listed + 1 overflow summary
+        self.assertEqual(len(fs), es._MAX_SERVICE_FINDINGS + 1)
+        self.assertEqual(fs[-1].raw["category"], "restart-service-overflow")
+
+    def test_reboot_pending_prefers_needs_restarting(self):
+        from unittest import mock
+        es = self._es()
+        with mock.patch.object(es, "_needs_restarting_reboot", return_value=True):
+            self.assertTrue(es.reboot_pending())
+        with mock.patch.object(es, "_needs_restarting_reboot", return_value=False), \
+             mock.patch.object(es, "_kernel_outdated", return_value=True):
+            self.assertFalse(es.reboot_pending())      # authoritative no wins
+
+    def test_reboot_pending_stdlib_fallback(self):
+        from unittest import mock
+        es = self._es()
+        with mock.patch.object(es, "_needs_restarting_reboot", return_value=None), \
+             mock.patch.object(es, "_kernel_outdated", return_value=True), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})):
+            self.assertTrue(es.reboot_pending())        # kernel differs -> reboot
+
+    def test_apply_overwrites_requires_reboot_from_reality(self):
+        # A package fix's predicted requires_reboot is replaced by the observed
+        # effective-state verdict once it actually applies.
+        from unittest import mock
+        from vulnscanai import remediation, catalog
+        import vulnscanai.scanners.effective_state as es
+        f = _finding(source="dnf", package="kernel", advisory="RHSA-2026:1",
+                     fixed_version="5-2")
+        f.remediation = catalog.build(f)
+        self.assertTrue(f.remediation.requires_reboot)   # heuristic predicts yes
+        with mock.patch.object(es, "reboot_pending", return_value=False), \
+             mock.patch.object(remediation, "_run",
+                               return_value={"command": "x", "status": "ok",
+                                             "detail": ""}):
+            ok = remediation.apply(f, dry_run=False)
+        self.assertTrue(ok)
+        self.assertTrue(f.remediation.applied)
+        self.assertFalse(f.remediation.requires_reboot)  # overwritten from reality
+
+    def test_fix_never_reboots_the_host(self):
+        from vulnscanai.remediation import screen_command
+        for cmd in ("reboot", "sudo reboot", "systemctl reboot", "shutdown -r now",
+                    "poweroff", "init 6", "systemctl poweroff", "kexec -e"):
+            self.assertIsNotNone(screen_command(cmd), f"should block: {cmd}")
+        # a service merely named with "reboot" is NOT a reboot command
+        self.assertIsNone(screen_command("systemctl restart reboot-guard.service"))
+        # a normal package update is still fine
+        self.assertIsNone(screen_command("dnf update -y --advisory=RHSA-2026:1"))
+
+    def test_apply_dry_run_keeps_prediction(self):
+        from unittest import mock
+        from vulnscanai import remediation, catalog
+        import vulnscanai.scanners.effective_state as es
+        f = _finding(source="dnf", package="kernel", advisory="RHSA-2026:1",
+                     fixed_version="5-2")
+        f.remediation = catalog.build(f)
+        with mock.patch.object(es, "reboot_pending", return_value=False) as probe:
+            remediation.apply(f, dry_run=True)
+        probe.assert_not_called()                        # no probe on dry-run
+        self.assertTrue(f.remediation.requires_reboot)   # prediction untouched
+
+
 if __name__ == "__main__":
     unittest.main()

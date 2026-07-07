@@ -11,6 +11,7 @@ from .base import Scanner
 from .compliance import ComplianceScanner
 from .container import ContainerScanner
 from .dnf_rhsa import DnfRhsaScanner
+from .effective_state import EffectiveStateScanner
 from .exploit import ExploitEnricher
 from .nvd import NvdEnricher
 from .openscap import OpenScapScanner
@@ -30,12 +31,14 @@ SCANNERS: Dict[str, Type[Scanner]] = {
     PortScanner.name: PortScanner,
     WebrootScanner.name: WebrootScanner,
     ContainerScanner.name: ContainerScanner,
+    EffectiveStateScanner.name: EffectiveStateScanner,
 }
 
 __all__ = [
     "Scanner", "DnfRhsaScanner", "OpenScapScanner", "SshConfigScanner",
     "SystemdSecurityScanner", "PortScanner", "WebrootScanner",
-    "ContainerScanner", "ComplianceScanner", "NvdEnricher", "ExploitEnricher",
+    "ContainerScanner", "EffectiveStateScanner", "ComplianceScanner",
+    "NvdEnricher", "ExploitEnricher",
     "PatchedStateEnricher", "ServiceStateEnricher", "SCANNERS",
     "download_oval", "detect_distro", "is_oval_stale", "oval_age_days",
 ]

@@ -13,7 +13,7 @@ _vulnscan_ai() {
         --min-severity|--fail-on)
             COMPREPLY=($(compgen -W "low moderate important critical" -- "$cur")); return;;
         --scanner)
-            COMPREPLY=($(compgen -W "dnf oscap ssh systemd ports webroot container" -- "$cur")); return;;
+            COMPREPLY=($(compgen -W "dnf oscap ssh systemd ports webroot container effective" -- "$cur")); return;;
         --compliance)
             COMPREPLY=($(compgen -W "cis-l1 cis-l2 cis-ws-l1 cis-ws-l2 stig stig-gui pci-dss hipaa ospp cui anssi-minimal anssi-intermediary anssi-enhanced anssi-high e8" -- "$cur")); return;;
         --source)

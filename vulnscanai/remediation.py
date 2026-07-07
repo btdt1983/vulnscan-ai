@@ -128,6 +128,13 @@ _DENY_PATTERNS = [
     r"update-crypto-policies\s+--set\s+LEGACY",
     r":\(\)\s*\{",                       # fork bomb
     r"\bchmod\s+-R\s+777\b",
+    # A fix must never take the host down itself. The effective-state scanner
+    # flags when a reboot is needed; rebooting is the operator's call, on their
+    # schedule — not something `fix --yes` should do mid-run. Anchored to the
+    # command verb so a service *named* e.g. "reboot-guard" isn't caught.
+    r"^\s*(sudo\s+)?(reboot|poweroff|halt|shutdown|kexec)\b",
+    r"^\s*(sudo\s+)?init\s+[06]\b",
+    r"\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b",
 ]
 _DENY_RE = [re.compile(p) for p in _DENY_PATTERNS]
 
@@ -577,7 +584,19 @@ def apply(finding: Finding, dry_run: bool = False,
     rem.rolled_back = False
     if _is_transactional(rem):
         return _apply_transactional(finding, dry_run, state_dir, on_step)
-    return _apply_simple(rem, dry_run, on_step)
+    ok = _apply_simple(rem, dry_run, on_step)
+    # A package fix's reboot need is a FACT once it has actually run, not the
+    # AI/catalog prediction: overwrite requires_reboot with the effective-state
+    # verdict (running-vs-installed kernel / superseded core libs / needs-
+    # restarting). Only for real, applied package fixes; a no-op or dry-run keeps
+    # the prediction. Never let the probe break an otherwise-successful apply.
+    if rem.applied:
+        try:
+            from .scanners.effective_state import reboot_pending
+            rem.requires_reboot = reboot_pending()
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
 
 
 def _emit(results: List[Dict[str, object]], res: Dict[str, object],

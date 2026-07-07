@@ -105,7 +105,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
@@ -144,6 +144,18 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > mounts downgraded a step, `--privileged` reported once. These are runtime
 > findings, so the AI's fix is to **recreate the container** without the flag (no
 > service to reload) — review before acting.
+
+> **`effective` scanner.** A patch on disk is not a patch in RAM. It reports what
+> the **running** system is still using: a host on an **older kernel** than the
+> one installed (package scanners call the kernel patched the instant the RPM
+> lands, but you keep executing the vulnerable one until you reboot — severity
+> `important`), and services still mapping a **deleted/replaced library**
+> (`libssl` updated on disk but the process holds the old code — restart the
+> service to load the fix). Pure stdlib via `/proc` + `rpm`; when dnf-utils'
+> `needs-restarting -r` is present it is used as the authoritative reboot verdict.
+> The findings are informational posture (no auto-remediation — restart/reboot on
+> your schedule), and `fix` **overwrites a package fix's `requires_reboot` with
+> this ground truth** after applying, so the "reboot required" note is a fact.
 
 > **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
 > CVE is checked against the **CISA KEV** catalog (actively exploited in the
