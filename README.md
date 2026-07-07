@@ -112,7 +112,23 @@ you can also dial the **reasoning effort** with `--effort low|medium|high|xhigh|
 thinking, so the model reasons harder on tricky fixes. Use `max` when correctness
 matters more than cost; other providers ignore the flag.
 
-### Fully offline / air-gapped (Ollama)
+### Fully offline / air-gapped
+
+**Package fixes need no AI at all.** For `dnf`/`oscap` (package/advisory)
+findings, `fix` builds a deterministic plan — a scoped `dnf update -y
+--advisory=<id>` — locally, with **no model and no network**. Run it fully
+air-gapped with:
+
+```bash
+vulnscan-ai fix --offline        # deterministic dnf plan; never calls a provider
+```
+
+Config/service findings (ssh/systemd/ports/webroot/container) still need
+reasoning; for those, either run a local model (below) or handle them manually
+(`--offline` reports them as "no offline plan" and skips them). Disable the
+catalog entirely with `fix --no-catalog` or `"offline_catalog": false`.
+
+#### A local model for config-fix reasoning (Ollama)
 
 No API key, no external calls — the AI step runs against a local model.
 

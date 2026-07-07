@@ -64,7 +64,9 @@ _vulnscan-ai() {
             '--pdf[write PDF report]:file:_files' \
             '--export-script[write a bash fix script]:file:_files' \
             '--export-ansible[write an Ansible playbook]:file:_files' \
-            '*--ignore[suppress matching findings]:pattern:' ;;
+            '*--ignore[suppress matching findings]:pattern:' \
+            '(--no-catalog)--offline[plan from the offline catalog only; never call a provider]' \
+            '(--offline)--no-catalog[disable the offline catalog; use the AI provider for every finding]' ;;
         rollback)
           _arguments \
             '--list[list fixes with a stored backup]' \

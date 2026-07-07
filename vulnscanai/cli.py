@@ -540,18 +540,48 @@ def cmd_fix(cfg: Config, args) -> int:
 
     provider = get_provider(args.provider or cfg.provider, args.model or cfg.model,
                             timeout=cfg.timeout, effort=cfg.claude_effort)
-    if not provider.available():
+    # The offline catalog builds a deterministic dnf plan for package/advisory
+    # findings with no AI call, so a missing provider is no longer a dead end:
+    # fall back to the catalog. --offline forces catalog-only (never call the
+    # AI); --no-catalog disables it (AI for everything).
+    offline = bool(getattr(args, "offline", False)) or not provider.available()
+    # --offline is an explicit request for the deterministic catalog and must
+    # override config: force it on regardless of cfg.offline_catalog. The flags
+    # are mutually exclusive, so --offline implies --no-catalog is not set.
+    use_catalog = (bool(getattr(args, "offline", False))
+                   or (getattr(cfg, "offline_catalog", True)
+                       and not getattr(args, "no_catalog", False)))
+    if not use_catalog and not provider.available():
         _eprint(f"Provider '{provider.name}' is not configured "
-                f"(missing {provider.api_key_env or 'endpoint'}).")
+                f"(missing {provider.api_key_env or 'endpoint'}) and the offline "
+                f"catalog is disabled (--no-catalog) — nothing can plan a fix.")
         return 2
 
-    print(f"Requesting remediation from {provider.name}/{provider.model} "
-          f"for {len(findings)} finding(s)...")
+    n = len(findings)
+    if not use_catalog:
+        # --no-catalog (or offline_catalog=false) with a provider available:
+        # every finding goes to the AI.
+        print(f"Planning fixes: offline catalog disabled — "
+              f"{provider.name}/{provider.model} for all {n} finding(s)...")
+    elif offline:
+        if getattr(args, "offline", False) and provider.available():
+            reason = f"--offline set; {provider.name} available but not used"
+        elif not provider.available():
+            reason = ("no AI provider configured — package/advisory fixes are "
+                      "deterministic; config fixes need a provider")
+        else:
+            reason = "offline"
+        print(f"Planning fixes from the offline catalog only ({reason}) "
+              f"for {n} finding(s)...")
+    else:
+        print(f"Planning fixes: offline catalog for package/advisory findings, "
+              f"{provider.name}/{provider.model} for the rest ({n} finding(s))...")
 
     def progress(i, total, f):
         _eprint(f"  [{i}/{total}] {f.package or f.primary_cve or f.title}")
 
-    remediation.propose_all(provider, findings, on_progress=progress)
+    remediation.propose_all(provider, findings, on_progress=progress,
+                            offline=offline, use_catalog=use_catalog)
 
     # Surface AI failures up front. A failed proposal used to show only an opaque
     # "(AI proposal failed)" per finding, hiding the real reason (e.g. "credit
@@ -570,6 +600,26 @@ def cmd_fix(cfg: Config, args) -> int:
             _eprint(f"  All proposals failed via {provider.name}/{provider.model} — "
                     f"this looks systemic (provider credits, API key, or model id). "
                     f"Nothing to apply.")
+            _save_findings(cfg, findings)
+            return 2
+
+    # Findings the offline catalog could not plan (a config fix with no provider,
+    # or a finding with no advisory/version). They carry no commands, are skipped
+    # in the apply loop below, and are surfaced here so the operator knows why.
+    from . import catalog
+    unplanned = [f for f in findings
+                 if f.remediation and f.remediation.summary == catalog.NO_PLAN]
+    if unplanned:
+        reasons = list(dict.fromkeys(f.remediation.explanation or "unknown"
+                                     for f in unplanned))
+        _eprint(f"\n  i {len(unplanned)}/{len(findings)} finding(s) have no offline "
+                f"plan and are skipped:")
+        for r in reasons:
+            _eprint(f"      - {r}")
+        actionable = [f for f in findings if f.remediation
+                      and (f.remediation.commands or f.remediation.write_files)]
+        if not actionable:
+            _eprint("  No finding has an applicable offline fix. Nothing to apply.")
             _save_findings(cfg, findings)
             return 2
 
@@ -595,6 +645,12 @@ def cmd_fix(cfg: Config, args) -> int:
     approve_all = auto
     ignored_ids: set = set()
     for f in findings:
+        # Skip findings with no actionable plan (a failed AI proposal or an
+        # offline no-plan finding): they were surfaced above, and applying an
+        # empty plan would falsely report success.
+        rem = f.remediation
+        if rem is None or (not rem.commands and not rem.write_files):
+            continue
         decision = "all" if approve_all else _approve(f, auto=False)
         if decision == "quit":
             print("Aborted by operator.")
@@ -755,12 +811,19 @@ def cmd_scheduled(cfg: Config, args) -> int:
         provider = get_provider(args.provider or cfg.provider,
                                 args.model or cfg.model, timeout=cfg.timeout,
                                 effort=cfg.claude_effort)
+        use_catalog = getattr(cfg, "offline_catalog", True)
         if provider.available():
-            print(f"  generating remediation plan via {provider.name}/{provider.model}")
-            remediation.propose_all(provider, findings)
+            print(f"  generating remediation plan via {provider.name}/{provider.model} "
+                  f"(offline catalog for package fixes)")
+            remediation.propose_all(provider, findings, use_catalog=use_catalog)
+        elif use_catalog:
+            print("  generating deterministic offline remediation plan "
+                  "(no provider; package/advisory fixes only)")
+            remediation.propose_all(provider, findings, offline=True, use_catalog=True)
         else:
             _eprint(f"  --plan requested but provider '{provider.name}' is not "
-                    f"configured; writing scan-only report")
+                    f"configured and the offline catalog is disabled; "
+                    f"writing scan-only report")
 
     reports_dir = cfg.ensure_reports_dir()
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1019,6 +1082,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--ignore", action="append", metavar="PATTERN",
                     help="with --scan: suppress findings matching this pattern "
                          "(glob, repeatable)")
+    catgrp = sp.add_mutually_exclusive_group()
+    catgrp.add_argument("--offline", action="store_true",
+                        help="plan fixes from the deterministic offline catalog "
+                             "only; never call an AI provider (air-gapped)")
+    catgrp.add_argument("--no-catalog", action="store_true",
+                        help="disable the offline catalog; use the AI provider "
+                             "for every finding")
     sp.set_defaults(func=cmd_fix)
 
     sp = sub.add_parser(

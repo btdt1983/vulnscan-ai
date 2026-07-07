@@ -98,10 +98,13 @@ List the compliance profiles this host's SCAP datastream offers, then exit.
 .BI \-\-compliance\-datastream " PATH"
 Override the SCAP datastream (default: auto-detect for this distro).
 .SS fix
-Ask the AI provider to propose remediation, then apply with approval. Proposed
-commands are screened against a safety deny-list. The per-finding prompt accepts
-\fBy\fR (yes), \fBn\fR (no), \fBi\fR (ignore), \fBa\fR (all), or \fBq\fR (quit).
-\fBi\fR writes the finding to the persistent baseline
+Propose remediation, then apply with approval. Proposed commands are screened
+against a safety deny-list. Package/advisory findings (\fBdnf\fR/\fBoscap\fR) are
+planned by a deterministic offline catalog (a scoped \fBdnf update
+\-\-advisory=<id>\fR) with no AI call, so \fBfix\fR works air-gapped; the AI
+provider is used only for config/service findings that need reasoning. The
+per-finding prompt accepts \fBy\fR (yes), \fBn\fR (no), \fBi\fR (ignore), \fBa\fR
+(all), or \fBq\fR (quit). \fBi\fR writes the finding to the persistent baseline
 (\fI~/.config/vulnscan-ai/ignore\fR) so future scans suppress it. During apply
 each step is streamed live (backup, every command, validate, service
 reload/health check, and rollback) together with the command's output.
@@ -126,6 +129,13 @@ Produce the plan but execute nothing.
 .TP
 .BI \-\-pdf " PATH"
 Write a PDF report after fixing.
+.TP
+.B \-\-offline
+Plan fixes from the deterministic offline catalog only; never call an AI provider
+(air-gapped). Mutually exclusive with \fB\-\-no\-catalog\fR.
+.TP
+.B \-\-no\-catalog
+Disable the offline catalog; use the AI provider for every finding.
 .SS audit
 Show the append\-only remediation audit log. Every fix actually applied (or
 rolled back), from the CLI or the web dashboard, is recorded as one JSON line in

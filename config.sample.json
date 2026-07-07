@@ -6,6 +6,7 @@
   "scanners": ["dnf"],
   "min_severity": "low",
   "enrich": true,
+  "offline_catalog": true,
   "compliance_profile": "cis-l1",
   "compliance_datastream": null,
   "auto_approve": false,

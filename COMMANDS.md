@@ -270,10 +270,30 @@ unrelated config backups or service restarts (those belong to config scanners).
 A `dnf update` that reports **"Nothing to do"** is shown as `[no-change]` (not a
 false success), so you can tell when an advisory didn't actually apply.
 
+**Offline catalog (no AI needed for package fixes).** Package/advisory findings
+(`dnf`/`oscap`) are planned by a **deterministic offline catalog** — a scoped
+`dnf update -y --advisory=<id>` (or `dnf update -y <package>`) built locally with
+**no AI call and no network**. This makes package fixes reproducible (same
+finding → same plan) and lets `fix` work **fully air-gapped**: a host with no AI
+provider configured is no longer a dead end. The AI is reserved for
+config/service findings (ssh/systemd/ports/webroot/container) that genuinely need
+reasoning. Control it with:
+
+- `--offline` — plan **only** from the catalog, never call a provider (air-gapped);
+  config findings that need reasoning are reported as "no offline plan" and skipped.
+- `--no-catalog` — disable the catalog and use the AI provider for every finding.
+- config key `offline_catalog` (default `true`) — the same default, persistently.
+  `--offline` overrides it on the command line.
+
+Catalog plans are stamped `provider=catalog / model=offline` in the report and
+[audit log](#audit), and export (`--export-script`/`--export-ansible`) renders
+them like any other plan.
+
 ```
 vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
                 [--min-severity SEV] [--yes] [--dry-run] [--pdf PATH]
                 [--export-script PATH] [--export-ansible PATH]
+                [--offline | --no-catalog]
 ```
 
 | Option | Description |
@@ -289,6 +309,8 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 | `--export-script PATH` | Write a ready-to-run **bash** fix script (with backup/validate/rollback) and **do not apply**. |
 | `--export-ansible PATH` | Write an **Ansible playbook** of the fixes and **do not apply**. |
 | `--ignore PATTERN` | With `--scan`: suppress matching findings (glob, repeatable). |
+| `--offline` | Plan fixes from the deterministic offline catalog only; never call an AI provider (air-gapped). Mutually exclusive with `--no-catalog`. |
+| `--no-catalog` | Disable the offline catalog; use the AI provider for every finding. |
 
 Interactive prompt per finding: `[y]es / [n]o / [i]gnore / [a]ll / [q]uit`.
 **`[i]gnore`** accepts the finding as expected and writes it to the persistent

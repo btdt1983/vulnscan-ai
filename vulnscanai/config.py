@@ -40,6 +40,7 @@ class Config:
     vendor_state_filter: bool = True         # drop Red Hat "not affected" CVEs
     service_state_filter: bool = True        # downgrade dormant-daemon findings
     patched_filter: bool = True              # drop findings already patched (no installable update)
+    offline_catalog: bool = True             # deterministic dnf plan for package fixes (no AI)
     exploit_enrich: bool = True              # KEV/EPSS exploitation intel (network)
     oval_auto_update: bool = True            # auto-refresh a stale OVAL feed on scan
     oval_max_age_days: int = 7               # OVAL considered stale past this age

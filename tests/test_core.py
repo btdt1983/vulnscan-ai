@@ -2852,5 +2852,303 @@ class TestNeverCrash(unittest.TestCase):
             os.environ.pop("VULNSCANAI_DEBUG", None)
 
 
+class TestOfflineCatalog(unittest.TestCase):
+    """The deterministic offline remediation catalog: package/advisory findings
+    get a reproducible dnf plan with no AI call; config findings fall through."""
+
+    def test_build_advisory_finding(self):
+        from vulnscanai import catalog
+        f = _finding(source="dnf", package="kernel", advisory="RHSA-2026:1234",
+                     fixed_version="5.14.0-1.el9")
+        rem = catalog.build(f)
+        self.assertIsNotNone(rem)
+        self.assertEqual(rem.commands, ["dnf update -y --advisory=RHSA-2026:1234"])
+        self.assertEqual(rem.provider, "catalog")
+        self.assertEqual(rem.model, "offline")
+        self.assertEqual(rem.risk, "low")
+        self.assertTrue(rem.requires_reboot)             # kernel -> reboot
+        # The deterministic command must survive the same safety screen the AI
+        # plans do (no shell ops, not on the deny-list).
+        self.assertIsNone(screen_command(rem.commands[0]))
+
+    def test_build_oscap_advisory_no_package(self):
+        from vulnscanai import catalog
+        f = Finding(source="oscap", advisory="ALSA-2026:9", severity="important",
+                    title="bash advisory", cve_ids=["CVE-2026-1"])
+        rem = catalog.build(f)
+        self.assertEqual(rem.commands, ["dnf update -y --advisory=ALSA-2026:9"])
+        self.assertFalse(rem.requires_reboot)            # not kernel/glibc/openssl
+
+    def test_build_package_no_advisory_pins_dnf_update(self):
+        from vulnscanai import catalog
+        f = _finding(source="dnf", package="bash", advisory=None,
+                     fixed_version="5.1.8-9.el9")
+        rem = catalog.build(f)
+        self.assertEqual(rem.commands, ["dnf update -y bash"])
+
+    def test_build_returns_none_for_config_source(self):
+        from vulnscanai import catalog
+        f = _finding(source="ssh", package=None, cve_ids=[], advisory=None,
+                     title="PermitRootLogin yes")
+        self.assertIsNone(catalog.build(f))
+
+    def test_build_returns_none_without_advisory_or_version(self):
+        from vulnscanai import catalog
+        # package but neither advisory nor fixed_version -> catalog can't act
+        f = _finding(source="dnf", package="bash", advisory=None,
+                     fixed_version=None)
+        self.assertIsNone(catalog.build(f))
+
+    def test_unsupported_carries_reason_and_no_commands(self):
+        from vulnscanai import catalog
+        f = _finding(source="ssh", package=None, cve_ids=[], advisory=None)
+        rem = catalog.unsupported(f, offline=True, provider_available=False)
+        self.assertEqual(rem.summary, catalog.NO_PLAN)
+        self.assertEqual(rem.commands, [])
+        self.assertIn("config/service", rem.explanation)
+
+    def test_propose_all_catalog_first_skips_ai(self):
+        # With an advisory finding and a provider that would raise, the catalog
+        # must plan it deterministically and the AI must NOT be called.
+        from vulnscanai import remediation
+        from vulnscanai.ai.base import AIProvider, ProviderError
+
+        class Boom(AIProvider):
+            name = "boom"
+            default_model = "m"
+
+            def complete(self, system, user):
+                raise ProviderError("should not be called")
+
+        f = _finding(source="dnf", package="nginx", advisory="RHSA-2026:5",
+                     fixed_version="1.20-1")
+        remediation.propose_all(Boom(), [f])
+        self.assertEqual(f.remediation.provider, "catalog")
+        self.assertEqual(f.remediation.commands,
+                         ["dnf update -y --advisory=RHSA-2026:5"])
+
+    def test_propose_all_offline_config_finding_gets_no_plan(self):
+        from vulnscanai import remediation, catalog
+        from vulnscanai.ai.base import AIProvider
+
+        class Never(AIProvider):
+            name = "never"
+            default_model = "m"
+
+            def complete(self, system, user):
+                raise AssertionError("offline must not call the provider")
+
+        f = _finding(source="systemd", package=None, cve_ids=[], advisory=None,
+                     title="hardening")
+        remediation.propose_all(Never(), [f], offline=True)
+        self.assertEqual(f.remediation.summary, catalog.NO_PLAN)
+
+    def test_propose_all_no_catalog_uses_ai(self):
+        # --no-catalog path: even an advisory finding goes to the AI.
+        from vulnscanai import remediation
+        from vulnscanai.ai.base import AIProvider
+
+        class Echo(AIProvider):
+            name = "echo"
+            default_model = "m"
+
+            def complete(self, system, user):
+                return '{"summary":"ai","commands":["dnf update -y bash"]}'
+
+        f = _finding(source="dnf", package="bash", advisory="RHSA-2026:7",
+                     fixed_version="5-1")
+        remediation.propose_all(Echo(), [f], use_catalog=False)
+        self.assertEqual(f.remediation.summary, "ai")
+
+    def test_cmd_fix_offline_applies_catalog_plan(self):
+        # End to end: no provider configured, an advisory finding, --dry-run.
+        # cmd_fix must NOT dead-end (old rc 2); it plans from the catalog and
+        # returns 0.
+        import io, contextlib, types
+        from vulnscanai import cli
+        from vulnscanai.ai.base import AIProvider
+
+        class Unconfigured(AIProvider):
+            name = "claude"
+            default_model = "m"
+            api_key_env = "ANTHROPIC_API_KEY"
+
+            def available(self):
+                return False
+
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False
+        cli._save_findings(cfg, [_finding(source="dnf", package="bash",
+                                          advisory="RHSA-2026:8",
+                                          fixed_version="5-1")])
+        args = types.SimpleNamespace(
+            scan=False, scanner=None, all=False, no_enrich=True, min_severity=None,
+            provider=None, model=None, export_script=None, export_ansible=None,
+            dry_run=True, yes=True, pdf=None, ignore=None,
+            offline=False, no_catalog=False)
+        orig = cli.get_provider
+        cli.get_provider = lambda *a, **k: Unconfigured()
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+                rc = cli.cmd_fix(cfg, args)
+        finally:
+            cli.get_provider = orig
+        self.assertEqual(rc, 0)
+        self.assertIn("offline catalog", buf.getvalue())
+
+    def test_cmd_fix_no_catalog_without_provider_dead_ends(self):
+        # --no-catalog AND no provider -> honest dead end (rc 2).
+        import io, contextlib, types
+        from vulnscanai import cli
+        from vulnscanai.ai.base import AIProvider
+
+        class Unconfigured(AIProvider):
+            name = "claude"
+            default_model = "m"
+            api_key_env = "ANTHROPIC_API_KEY"
+
+            def available(self):
+                return False
+
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False
+        cli._save_findings(cfg, [_finding(source="dnf", package="bash",
+                                          advisory="RHSA-2026:8",
+                                          fixed_version="5-1")])
+        args = types.SimpleNamespace(
+            scan=False, scanner=None, all=False, no_enrich=True, min_severity=None,
+            provider=None, model=None, export_script=None, export_ansible=None,
+            dry_run=True, yes=True, pdf=None, ignore=None,
+            offline=False, no_catalog=True)
+        orig = cli.get_provider
+        cli.get_provider = lambda *a, **k: Unconfigured()
+        try:
+            with contextlib.redirect_stderr(io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                rc = cli.cmd_fix(cfg, args)
+        finally:
+            cli.get_provider = orig
+        self.assertEqual(rc, 2)
+
+    def test_catalog_plan_exports_to_bash(self):
+        from vulnscanai import catalog
+        f = _finding(source="dnf", package="bash", advisory="RHSA-2026:8",
+                     fixed_version="5-1")
+        f.remediation = catalog.build(f)
+        script = export_fix.to_bash_script([f])
+        self.assertIn("dnf update -y --advisory=RHSA-2026:8", script)
+
+    def test_build_rejects_injection_in_advisory_and_package(self):
+        # A crafted findings.json must never inject extra dnf arguments into the
+        # constructed command. _ADVISORY_RE is start-anchored only, so the gate
+        # uses fullmatch; the package name is allowlist-validated.
+        from vulnscanai import catalog
+        # advisory with trailing args -> rejected (no --advisory command built)
+        self.assertIsNone(catalog.build(_finding(
+            source="dnf", package=None, cve_ids=["CVE-1"],
+            advisory="RHSA-2026:1234 --nogpgcheck evil", fixed_version=None)))
+        # package carrying shell/argument metacharacters -> rejected
+        self.assertIsNone(catalog.build(_finding(
+            source="dnf", package="bash; rm -rf /", advisory=None,
+            fixed_version="1-1")))
+        self.assertIsNone(catalog.build(_finding(
+            source="dnf", package="--repofrompath=x", advisory=None,
+            fixed_version="1-1")))
+        # a legitimate name with + . - _ is still allowed
+        self.assertEqual(catalog.build(_finding(
+            source="dnf", package="libstdc++", advisory=None,
+            fixed_version="8-1")).commands, ["dnf update -y libstdc++"])
+
+    def test_build_malformed_advisory_falls_through(self):
+        from vulnscanai import catalog
+        # malformed advisory + valid package/version -> package command
+        self.assertEqual(catalog.build(_finding(
+            source="dnf", package="bash", advisory="not-an-advisory",
+            fixed_version="5-1")).commands, ["dnf update -y bash"])
+        # malformed advisory + nothing else -> None
+        self.assertIsNone(catalog.build(_finding(
+            source="dnf", package=None, cve_ids=["CVE-9"], advisory="garbage",
+            fixed_version=None)))
+
+    def _fix_args(self, **over):
+        import types
+        base = dict(scan=False, scanner=None, all=False, no_enrich=True,
+                    min_severity=None, provider=None, model=None,
+                    export_script=None, export_ansible=None, dry_run=True,
+                    yes=True, pdf=None, ignore=None, offline=False,
+                    no_catalog=False)
+        base.update(over)
+        return types.SimpleNamespace(**base)
+
+    def _run_cmd_fix(self, cfg, args):
+        import io, contextlib
+        from vulnscanai import cli
+        from vulnscanai.ai.base import AIProvider
+
+        class Unconfigured(AIProvider):
+            name = "claude"
+            default_model = "m"
+            api_key_env = "ANTHROPIC_API_KEY"
+
+            def available(self):
+                return False
+
+        orig = cli.get_provider
+        cli.get_provider = lambda *a, **k: Unconfigured()
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+                rc = cli.cmd_fix(cfg, args)
+        finally:
+            cli.get_provider = orig
+        return rc, buf.getvalue()
+
+    def test_cmd_fix_offline_all_unplanned_returns_2(self):
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False
+        cli._save_findings(cfg, [_finding(source="systemd", package=None,
+                                          cve_ids=[], advisory=None,
+                                          title="hardening")])
+        rc, out = self._run_cmd_fix(cfg, self._fix_args())
+        self.assertEqual(rc, 2)
+        self.assertIn("no offline plan", out)
+
+    def test_cmd_fix_offline_mixed_applies_actionable_skips_noplan(self):
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False
+        cli._save_findings(cfg, [
+            _finding(source="dnf", package="bash", advisory="RHSA-2026:8",
+                     fixed_version="5-1"),
+            _finding(source="systemd", package=None, cve_ids=[], advisory=None,
+                     title="hardening"),
+        ])
+        rc, out = self._run_cmd_fix(cfg, self._fix_args())
+        self.assertEqual(rc, 0)
+        self.assertIn("dnf update -y --advisory=RHSA-2026:8", out)  # actionable applied
+        self.assertIn("no offline plan", out)                      # config skipped
+        self.assertIn("1 fix(es) applied", out)                    # only one counted
+
+    def test_offline_flag_overrides_config_disabled(self):
+        # cfg.offline_catalog False + --offline -> catalog still used (CLI wins)
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cfg.patched_filter = False
+        cfg.offline_catalog = False
+        cli._save_findings(cfg, [_finding(source="dnf", package="bash",
+                                          advisory="RHSA-2026:8",
+                                          fixed_version="5-1")])
+        rc, out = self._run_cmd_fix(cfg, self._fix_args(offline=True))
+        self.assertEqual(rc, 0)
+        self.assertIn("dnf update -y --advisory=RHSA-2026:8", out)
+
+
 if __name__ == "__main__":
     unittest.main()

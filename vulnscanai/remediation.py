@@ -414,12 +414,39 @@ PROPOSAL_FAILED = "(AI proposal failed)"
 
 
 def propose_all(provider: AIProvider, findings: List[Finding],
-                on_progress: Optional[Callable[[int, int, Finding], None]] = None
-                ) -> None:
+                on_progress: Optional[Callable[[int, int, Finding], None]] = None,
+                *, offline: bool = False, use_catalog: bool = True) -> None:
+    """Fill in ``finding.remediation`` for every finding.
+
+    By default the deterministic offline catalog plans package/advisory findings
+    (``dnf`` scanner and ``oscap`` advisories) with no AI call; findings it can't
+    handle (config/service findings, or a finding with neither an advisory nor a
+    package + fixed version) fall through to the AI provider. This makes package
+    fixes reproducible and free, and reserves the model for findings that truly
+    need reasoning.
+
+    ``offline`` forces catalog-only: an unhandleable finding gets a clear no-plan
+    Remediation instead of an AI call, so ``fix`` runs fully air-gapped.
+    ``use_catalog=False`` restores the old AI-for-everything behaviour (the
+    ``fix --no-catalog`` escape hatch).
+    """
+    from . import catalog  # local import avoids an import cycle (catalog -> us)
+
     total = len(findings)
     for i, f in enumerate(findings, 1):
         if on_progress:
             on_progress(i, total, f)
+        rem = catalog.build(f) if use_catalog else None
+        if rem is not None:
+            f.remediation = rem
+            continue
+        can_ai = provider is not None and provider.available() and not offline
+        if not can_ai:
+            f.remediation = catalog.unsupported(
+                f, offline=offline,
+                provider_available=bool(provider is not None
+                                        and provider.available()))
+            continue
         try:
             f.remediation = propose(provider, f)
         except ProviderError as exc:

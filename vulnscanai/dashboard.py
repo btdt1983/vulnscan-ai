@@ -923,25 +923,32 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                                                 allow_fix, error="No such finding."))
 
         from .ai import ProviderError, get_provider
-        from . import remediation
-        try:
-            provider = get_provider(cfg.provider, cfg.model, timeout=cfg.timeout,
-                                    effort=getattr(cfg, "claude_effort", None))
-        except ProviderError as exc:
-            return self._html(200, render_fix_result(
-                target.title, fid, None, allow_fix, error=str(exc)))
-        if not provider.available():
-            return self._html(200, render_fix_result(
-                target.title, fid, None, allow_fix,
-                error=(f"AI provider '{cfg.provider}' is not configured "
-                       f"(no API key). Set one with 'vulnscan-ai setup' or an "
-                       f"environment variable.")))
-        try:
-            rem = remediation.propose(provider, target)
-        except Exception as exc:  # noqa: BLE001
-            return self._html(200, render_fix_result(
-                target.title, fid, None, allow_fix,
-                error=f"Could not propose a fix: {exc}"))
+        from . import remediation, catalog
+        # Catalog-first, mirroring the CLI: a package/advisory finding gets a
+        # deterministic dnf plan with no AI call (works even with no provider);
+        # only config/service findings fall through to the model.
+        rem = catalog.build(target) if getattr(cfg, "offline_catalog", True) else None
+        if rem is None:
+            try:
+                provider = get_provider(cfg.provider, cfg.model, timeout=cfg.timeout,
+                                        effort=getattr(cfg, "claude_effort", None))
+            except ProviderError as exc:
+                return self._html(200, render_fix_result(
+                    target.title, fid, None, allow_fix, error=str(exc)))
+            if not provider.available():
+                return self._html(200, render_fix_result(
+                    target.title, fid, None, allow_fix,
+                    error=(f"This finding needs an AI provider to plan a fix, but "
+                           f"'{cfg.provider}' is not configured (no API key). "
+                           f"Package/advisory findings are planned offline; this "
+                           f"one is a config/service fix. Set a provider with "
+                           f"'vulnscan-ai setup' or fix it manually.")))
+            try:
+                rem = remediation.propose(provider, target)
+            except Exception as exc:  # noqa: BLE001
+                return self._html(200, render_fix_result(
+                    target.title, fid, None, allow_fix,
+                    error=f"Could not propose a fix: {exc}"))
         target.remediation = rem
 
         applied = False
