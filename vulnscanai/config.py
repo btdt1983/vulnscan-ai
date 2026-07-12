@@ -44,6 +44,7 @@ class Config:
     exploit_enrich: bool = True              # KEV/EPSS exploitation intel (network)
     oval_auto_update: bool = True            # auto-refresh a stale OVAL feed on scan
     oval_max_age_days: int = 7               # OVAL considered stale past this age
+    fips_required: bool = False              # treat a non-FIPS host as a finding (fips scanner)
     # Compliance benchmark scanning (scan --compliance <profile>).
     compliance_profile: str = "cis-l1"       # default XCCDF profile (alias or id)
     compliance_datastream: Optional[str] = None  # SCAP datastream path; None = auto-detect

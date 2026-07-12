@@ -3334,5 +3334,164 @@ class TestEffectiveState(unittest.TestCase):
         self.assertTrue(f.remediation.requires_reboot)   # prediction untouched
 
 
+class TestFipsPosture(unittest.TestCase):
+    """The FIPS-posture scanner: crypto-policy / FIPS-mode gaps, all detection
+    logic unit-testable without any FIPS tooling on the host."""
+
+    def _fp(self):
+        import vulnscanai.scanners.fips_posture as fp
+        return fp
+
+    def _cats(self, findings):
+        return {f.raw.get("category") for f in findings}
+
+    def test_registered_in_scanners(self):
+        from vulnscanai.scanners import SCANNERS
+        self.assertIn("fips", SCANNERS)
+
+    def test_parse_fips_mode_check(self):
+        fp = self._fp()
+        self.assertEqual(fp.parse_fips_mode_check("FIPS mode is enabled."),
+                         "enabled")
+        self.assertEqual(fp.parse_fips_mode_check(
+            "Installation of FIPS modules is not completed.\n"
+            "FIPS mode is disabled."), "disabled")
+        self.assertEqual(fp.parse_fips_mode_check(
+            "Inconsistencies were found in the configuration."), "inconsistent")
+        # "inconsistent" wins even when an enabled line is also present
+        self.assertEqual(fp.parse_fips_mode_check(
+            "FIPS mode is enabled.\nInconsistency detected."), "inconsistent")
+        self.assertIsNone(fp.parse_fips_mode_check("something unrelated"))
+
+    def test_parse_cmdline_fips(self):
+        fp = self._fp()
+        self.assertTrue(fp.parse_cmdline_fips("ro root=/dev/x fips=1 quiet"))
+        self.assertFalse(fp.parse_cmdline_fips("ro root=/dev/x fips=0"))
+        self.assertFalse(fp.parse_cmdline_fips("ro quiet"))
+        # a substring like "fips=10" must not count as fips=1
+        self.assertFalse(fp.parse_cmdline_fips("boot fips=10 quiet"))
+
+    def test_policy_parts(self):
+        fp = self._fp()
+        self.assertEqual(fp._policy_parts("FIPS:OSPP"), ("FIPS", ["OSPP"]))
+        self.assertEqual(fp._policy_parts("default:sha1"), ("DEFAULT", ["SHA1"]))
+        self.assertEqual(fp._policy_parts(""), ("", []))
+        self.assertEqual(fp._policy_parts(None), ("", []))
+
+    def _state(self, **kw):
+        fp = self._fp()
+        return fp.FipsState(**kw)
+
+    def _audit(self, **kw):
+        fp = self._fp()
+        return fp.audit_fips(self._state(**kw))
+
+    def test_consistent_off_not_required_is_clean(self):
+        # A plain non-FIPS host with a sound policy is a legitimate config.
+        self.assertEqual(self._audit(
+            kernel_fips=False, mode_check="disabled", policy="DEFAULT",
+            configured_policy="DEFAULT", cmdline_fips=False, required=False), [])
+
+    def test_consistent_on_is_clean(self):
+        for pol in ("FIPS", "FIPS:OSPP"):
+            self.assertEqual(self._audit(
+                kernel_fips=True, mode_check="enabled", policy=pol,
+                configured_policy=pol, cmdline_fips=True, required=False), [],
+                f"{pol} should be clean")
+
+    def test_required_but_off(self):
+        f = self._audit(kernel_fips=False, policy="DEFAULT",
+                        configured_policy="DEFAULT", cmdline_fips=False,
+                        required=True)
+        self.assertEqual(self._cats(f), {"required-off"})
+        self.assertEqual(f[0].severity, "important")
+
+    def test_kernel_on_policy_off_half_enabled(self):
+        f = self._audit(kernel_fips=True, policy="DEFAULT",
+                        configured_policy="DEFAULT", cmdline_fips=True,
+                        required=False)
+        self.assertEqual(self._cats(f), {"kernel-on-policy-off"})
+        self.assertEqual(f[0].severity, "important")
+
+    def test_policy_on_kernel_off(self):
+        f = self._audit(kernel_fips=False, policy="FIPS",
+                        configured_policy="FIPS", cmdline_fips=False,
+                        required=False)
+        self.assertEqual(self._cats(f), {"policy-on-kernel-off"})
+
+    def test_mode_setup_inconsistent(self):
+        f = self._audit(kernel_fips=True, mode_check="inconsistent", policy="FIPS",
+                        configured_policy="FIPS", cmdline_fips=True, required=False)
+        self.assertIn("mode-inconsistent", self._cats(f))
+
+    def test_legacy_policy_flagged_on_any_host(self):
+        f = self._audit(kernel_fips=False, policy="LEGACY",
+                        configured_policy="LEGACY", cmdline_fips=False,
+                        required=False)
+        self.assertEqual(self._cats(f), {"policy-legacy"})
+        self.assertEqual(f[0].severity, "important")
+
+    def test_sha1_subpolicy(self):
+        f = self._audit(kernel_fips=False, policy="DEFAULT:SHA1",
+                        configured_policy="DEFAULT:SHA1", cmdline_fips=False,
+                        required=False)
+        self.assertEqual(self._cats(f), {"policy-sha1"})
+        self.assertEqual(f[0].severity, "moderate")
+
+    def test_pending_policy_change(self):
+        f = self._audit(kernel_fips=False, policy="DEFAULT",
+                        configured_policy="FIPS", cmdline_fips=False,
+                        required=False)
+        self.assertEqual(self._cats(f), {"policy-pending"})
+
+    def test_cmdline_missing_while_kernel_on(self):
+        f = self._audit(kernel_fips=True, policy="FIPS", configured_policy="FIPS",
+                        cmdline_fips=False, required=False)
+        self.assertEqual(self._cats(f), {"cmdline-missing"})
+
+    def test_required_off_not_double_reported_with_inconsistency(self):
+        # required + half-enabled: the specific half-enabled finding fires, and
+        # the generic "required but off" does NOT pile on.
+        f = self._audit(kernel_fips=True, policy="DEFAULT",
+                        configured_policy="DEFAULT", cmdline_fips=True,
+                        required=True)
+        self.assertEqual(self._cats(f), {"kernel-on-policy-off"})
+
+    def test_findings_have_no_package_or_cve(self):
+        # Config-style findings: id falls back to the title, stays stable/distinct.
+        f = self._audit(kernel_fips=False, policy="LEGACY",
+                        configured_policy="LEGACY", cmdline_fips=False)
+        self.assertEqual(f[0].source, "fips")
+        self.assertIsNone(f[0].package)
+        self.assertEqual(f[0].cve_ids, [])
+        self.assertTrue(f[0].id)
+
+    def test_scanner_available_and_scan_smoke(self):
+        fp = self._fp()
+
+        class _Cfg:
+            fips_required = False
+
+        scanner = fp.FipsPostureScanner(_Cfg())
+        # available() is a plain bool; scan() must never raise on a real host.
+        self.assertIsInstance(scanner.available(), bool)
+        self.assertIsInstance(scanner.scan(), list)
+
+    def test_scanner_honours_required_via_config(self):
+        from unittest import mock
+        fp = self._fp()
+
+        class _Cfg:
+            fips_required = True
+
+        with mock.patch.object(fp, "gather_state",
+                               side_effect=lambda required: fp.FipsState(
+                                   kernel_fips=False, policy="DEFAULT",
+                                   configured_policy="DEFAULT", cmdline_fips=False,
+                                   required=required)):
+            f = fp.FipsPostureScanner(_Cfg()).scan()
+        self.assertEqual(self._cats(f), {"required-off"})
+
+
 if __name__ == "__main__":
     unittest.main()

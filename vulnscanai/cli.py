@@ -1039,7 +1039,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("scan", help="scan for vulnerabilities")
     sp.add_argument("--scanner", action="append",
-                    help="scanner to run (repeatable): dnf, oscap, ssh, systemd, ports, webroot, container")
+                    help="scanner to run (repeatable): dnf, oscap, ssh, systemd, ports, webroot, container, effective, fips")
     sp.add_argument("--all", action="store_true",
                     help="run every available scanner (overrides --scanner)")
     sp.add_argument("--min-severity", help="floor: low|moderate|important|critical")

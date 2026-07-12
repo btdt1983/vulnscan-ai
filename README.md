@@ -27,7 +27,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Decision | Choice |
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
-| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container`. Runtime posture: `effective` (reboot/restart still pending) |
+| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container`. Runtime posture: `effective` (reboot/restart still pending). Crypto posture: `fips` (FIPS-mode & crypto-policy gaps) |
 | Prioritisation | **CISA KEV** (actively exploited) + **EPSS** exploit-probability on every finding |
 | Compliance | **CIS / STIG / PCI-DSS / HIPAA** benchmarks via OpenSCAP XCCDF (`scan --compliance`): score + failing rules + dashboard tab |
 | Advisories | `news` command + dashboard tab: CISA KEV, NVD, distro errata (cached, offline-friendly) |
@@ -230,6 +230,9 @@ vulnscan-ai scan --scanner webroot
 # Audit running Podman/Docker containers for unsafe runtime settings
 vulnscan-ai scan --scanner container
 
+# Audit the FIPS / crypto-policy posture (half-enabled FIPS, LEGACY policy, ...)
+vulnscan-ai scan --scanner fips
+
 # Run every available scanner at once
 vulnscan-ai scan --all
 
@@ -299,6 +302,17 @@ The scanners are built to avoid noise:
   present. `fix` also **overwrites a package fix's `requires_reboot` with this
   ground truth** after applying, so the "reboot required" note is a fact, not a
   guess. Run it with `--scanner effective` or `--all`.
+- **`fips`** audits whether the host's cryptography is actually hardened — the
+  tool is FIPS-aware, so it checks its own ground. It flags the classic
+  **half-enabled FIPS** trap (kernel in FIPS mode but the system crypto-policy is
+  not, so OpenSSL/GnuTLS/OpenSSH still negotiate non-approved algorithms — or the
+  reverse), an **inconsistent** state per `fips-mode-setup --check`, a **weakened
+  crypto-policy** (`LEGACY`, or a SHA-1-restoring sub-policy — valuable on *any*
+  host), and a **pending** policy change (configured ≠ applied). A consistent
+  non-FIPS host is a legitimate configuration and produces **no findings**; set
+  `"fips_required": true` to treat a non-FIPS host as a finding. Pure stdlib
+  (reads `/proc` + the crypto-policies state files). Run it with `--scanner fips`
+  or `--all`.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.4
+Version:        0.4.5
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -116,6 +116,20 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sun Jul 12 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.5-1
+- FIPS-posture scanner (`fips`, 9th scanner): audits whether the host's
+  cryptography is actually hardened. Reads /proc/sys/crypto/fips_enabled,
+  /proc/cmdline and the crypto-policies state files (plus `fips-mode-setup
+  --check` when present) and reports only real gaps: the half-enabled FIPS trap
+  (kernel in FIPS mode but the system crypto-policy is not, so OpenSSL/OpenSSH
+  still negotiate non-approved algorithms, or the reverse; important), an
+  inconsistent state, a weakened crypto-policy (LEGACY, or a SHA-1-restoring
+  sub-policy; flagged on any host), and a pending policy change (configured !=
+  applied). A consistent non-FIPS host produces NO findings; set
+  `fips_required: true` to treat a non-FIPS host as an important finding. Pure
+  stdlib; in `--all`, not in the default scanner set. `info` now also shows the
+  active crypto-policy. New config key `fips_required` (default false).
+
 * Tue Jul 07 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.4-1
 - Effective-state scanner (`effective`): a patch on disk is not a patch in RAM.
   Reports what the RUNNING system is still using — a host on an older kernel than

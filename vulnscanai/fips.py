@@ -16,8 +16,15 @@ from __future__ import annotations
 import hashlib
 import ssl
 from functools import lru_cache
+from typing import Optional
 
 FIPS_FLAG = "/proc/sys/crypto/fips_enabled"
+
+# The system-wide crypto policy (crypto-policies). ``state/current`` is the
+# policy actually applied to OpenSSL/GnuTLS/OpenSSH/etc.; ``config`` is the one
+# configured (they differ when a change has not been applied/rebooted yet).
+CRYPTO_POLICY_CURRENT = "/etc/crypto-policies/state/current"
+CRYPTO_POLICY_CONFIG = "/etc/crypto-policies/config"
 
 # Digests permitted under FIPS 140-3 (SHA-2 / SHA-3 families).
 _FIPS_APPROVED_HASHES = {
@@ -67,6 +74,24 @@ def tls_context() -> ssl.SSLContext:
     return ctx
 
 
+def active_crypto_policy() -> Optional[str]:
+    """The system-wide crypto policy currently applied, e.g. ``FIPS`` or
+    ``DEFAULT:SHA1`` — or None when crypto-policies is not in use.
+
+    Reads ``/etc/crypto-policies/state/current`` (the applied policy) directly,
+    so no subprocess or ``crypto-policies-scripts`` package is required.
+    """
+    try:
+        with open(CRYPTO_POLICY_CURRENT, encoding="ascii", errors="replace") as fh:
+            value = fh.read().strip()
+    except OSError:
+        return None
+    return value or None
+
+
 def status_line() -> str:
     state = "ENABLED" if fips_enabled() else "disabled"
-    return f"FIPS mode: {state} (crypto provided by system OpenSSL)"
+    policy = active_crypto_policy()
+    policy_part = f" | crypto-policy: {policy}" if policy else ""
+    return (f"FIPS mode: {state}{policy_part} "
+            f"(crypto provided by system OpenSSL)")

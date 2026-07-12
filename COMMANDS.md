@@ -105,7 +105,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch), `fips` (FIPS-mode & crypto-policy posture). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
@@ -156,6 +156,22 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > The findings are informational posture (no auto-remediation — restart/reboot on
 > your schedule), and `fix` **overwrites a package fix's `requires_reboot` with
 > this ground truth** after applying, so the "reboot required" note is a fact.
+
+> **`fips` scanner.** Audits whether the host's cryptography is genuinely
+> hardened (the tool is FIPS-aware — this checks its own ground). It reads
+> `/proc/sys/crypto/fips_enabled`, `/proc/cmdline` and the crypto-policies state
+> files (plus `fips-mode-setup --check` when present) and reports only real gaps:
+> the **half-enabled FIPS** trap (kernel in FIPS mode but the system crypto-policy
+> is not — so OpenSSL/GnuTLS/OpenSSH still negotiate non-approved algorithms — or
+> the reverse; `important`), an **inconsistent** state, a **weakened crypto-policy**
+> (`LEGACY`, or a SHA-1-restoring sub-policy such as `DEFAULT:SHA1` — flagged on
+> *any* host, `important`/`moderate`), and a **pending** policy change (configured
+> ≠ applied — the crypto analogue of "a patch on disk is not a patch in RAM";
+> `moderate`). A consistent non-FIPS host is a legitimate configuration and
+> produces **no findings**. Set `"fips_required": true` in the config to treat a
+> non-FIPS host as an `important` finding (for hosts that must be FIPS 140). Pure
+> stdlib; fixes are guided (`fips-mode-setup --enable` + reboot, or
+> `update-crypto-policies --set …`), not auto-applied.
 
 > **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
 > CVE is checked against the **CISA KEV** catalog (actively exploited in the
