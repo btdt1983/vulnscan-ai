@@ -66,7 +66,8 @@ _vulnscan-ai() {
             '--export-ansible[write an Ansible playbook]:file:_files' \
             '*--ignore[suppress matching findings]:pattern:' \
             '(--no-catalog)--offline[plan from the offline catalog only; never call a provider]' \
-            '(--offline)--no-catalog[disable the offline catalog; use the AI provider for every finding]' ;;
+            '(--offline)--no-catalog[disable the offline catalog; use the AI provider for every finding]' \
+            '--no-scap-grounding[disable grounding AI prompts with matching SSG hardening snippets]' ;;
         rollback)
           _arguments \
             '--list[list fixes with a stored backup]' \

@@ -317,11 +317,26 @@ Catalog plans are stamped `provider=catalog / model=offline` in the report and
 [audit log](#audit), and export (`--export-script`/`--export-ansible`) renders
 them like any other plan.
 
+**SCAP-grounded config fixes (less AI hallucination, no training required).**
+For config/service findings that DO go to the AI, `fix` looks up a
+lexically-matching rule in the host's SCAP Security Guide (SSG) datastream —
+the same one `scan --compliance` reads — and hands the model that rule's
+peer-reviewed shell remediation script as an optional reference to adapt, not
+copy verbatim. Matching is conservative (a cosine-similarity floor AND a
+minimum number of shared tokens must both clear, so an unrelated rule sharing
+one word with the finding is never used as "vetted guidance"). No
+`scap-security-guide` installed, or no rule clears the threshold? Silent
+no-op — behaviour is unchanged. Control it with:
+
+- `--no-scap-grounding` — disable it for this run; use the finding's own
+  details only.
+- config key `scap_grounding` (default `true`).
+
 ```
 vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
                 [--min-severity SEV] [--yes] [--dry-run] [--pdf PATH]
                 [--export-script PATH] [--export-ansible PATH]
-                [--offline | --no-catalog]
+                [--offline | --no-catalog] [--no-scap-grounding]
 ```
 
 | Option | Description |
@@ -339,6 +354,7 @@ vulnscan-ai fix [--scan] [--scanner NAME]... [--no-enrich]
 | `--ignore PATTERN` | With `--scan`: suppress matching findings (glob, repeatable). |
 | `--offline` | Plan fixes from the deterministic offline catalog only; never call an AI provider (air-gapped). Mutually exclusive with `--no-catalog`. |
 | `--no-catalog` | Disable the offline catalog; use the AI provider for every finding. |
+| `--no-scap-grounding` | Disable grounding AI prompts with matching SCAP Security Guide hardening-rule snippets. |
 
 Interactive prompt per finding: `[y]es / [n]o / [i]gnore / [a]ll / [q]uit`.
 **`[i]gnore`** accepts the finding as expected and writes it to the persistent

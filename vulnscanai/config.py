@@ -41,6 +41,7 @@ class Config:
     service_state_filter: bool = True        # downgrade dormant-daemon findings
     patched_filter: bool = True              # drop findings already patched (no installable update)
     offline_catalog: bool = True             # deterministic dnf plan for package fixes (no AI)
+    scap_grounding: bool = True              # ground AI config-fix prompts with matching SSG hardening snippets (no-op if scap-security-guide isn't installed)
     exploit_enrich: bool = True              # KEV/EPSS exploitation intel (network)
     oval_auto_update: bool = True            # auto-refresh a stale OVAL feed on scan
     oval_max_age_days: int = 7               # OVAL considered stale past this age

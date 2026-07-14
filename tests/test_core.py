@@ -1680,14 +1680,19 @@ class TestRemediationSanitize(unittest.TestCase):
 
         def __init__(self, payload):
             self._payload = payload
+            self.last_user = None
 
         def complete(self, system, user):
+            self.last_user = user
             return self._payload
 
-    def _propose(self, payload, **finding_kw):
+    def _propose(self, payload, *, ground=False, **finding_kw):
+        # ground=False by default: these tests exercise sanitisation, not
+        # grounding, and must stay hermetic regardless of whether the host
+        # running them happens to have scap-security-guide installed.
         from vulnscanai.remediation import propose
         f = _finding(**finding_kw)
-        return propose(self._FakeProvider(payload), f)
+        return propose(self._FakeProvider(payload), f, ground=ground)
 
     def test_restart_mode_menu_echo_normalised(self):
         rem = self._propose(
@@ -1815,6 +1820,48 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertEqual(rem.restart_mode, "reload")
         self.assertEqual(rem.service, "sshd")
         self.assertEqual(rem.validate_cmd, "true")
+
+    def test_propose_appends_grounding_for_config_source(self):
+        from unittest import mock
+        from vulnscanai.remediation import propose
+        provider = self._FakeProvider('{"summary":"x"}')
+        with mock.patch("vulnscanai.scap_kb.ground", return_value="STUB REFERENCE"):
+            propose(provider, _finding(source="ssh", title="weak sshd"), ground=True)
+        self.assertIn("STUB REFERENCE", provider.last_user)
+
+    def test_propose_skips_grounding_for_package_source(self):
+        from unittest import mock
+        from vulnscanai.remediation import propose
+        provider = self._FakeProvider('{"summary":"x"}')
+        with mock.patch("vulnscanai.scap_kb.ground") as mock_ground:
+            propose(provider, _finding(source="dnf", title="bash"), ground=True)
+        mock_ground.assert_not_called()
+
+    def test_propose_ground_false_disables_grounding(self):
+        from unittest import mock
+        from vulnscanai.remediation import propose
+        provider = self._FakeProvider('{"summary":"x"}')
+        with mock.patch("vulnscanai.scap_kb.ground") as mock_ground:
+            propose(provider, _finding(source="ssh", title="weak sshd"), ground=False)
+        mock_ground.assert_not_called()
+
+    def test_propose_all_threads_ground_kwarg(self):
+        from unittest import mock
+        from vulnscanai import remediation
+        from vulnscanai.ai.base import AIProvider
+
+        class Echo(AIProvider):
+            name = "echo"
+            default_model = "m"
+
+            def complete(self, system, user):
+                return '{"summary":"x"}'
+
+        f = _finding(source="ssh", package=None, cve_ids=[], advisory=None,
+                     title="weak sshd")
+        with mock.patch("vulnscanai.scap_kb.ground") as mock_ground:
+            remediation.propose_all(Echo(), [f], ground=False)
+        mock_ground.assert_not_called()
 
 
 class TestContainerScanner(unittest.TestCase):
@@ -2646,6 +2693,163 @@ class TestComplianceScanner(unittest.TestCase):
         # empty state
         empty = dashboard.render_compliance(None, "h", "no scan")
         self.assertIn("No compliance scan saved yet", empty)
+
+
+# --------------------------------------------------------------------------- #
+# SCAP knowledge base (grounds AI remediation prompts with SSG fix snippets)
+# --------------------------------------------------------------------------- #
+_SCAP_KB_HTML_NS = "http://www.w3.org/1999/xhtml"
+
+_FIX_RULES_DS = f"""<?xml version="1.0"?>
+<Benchmark xmlns="{_XCCDF_NS}" xmlns:html="{_SCAP_KB_HTML_NS}"
+          id="xccdf_org.ssgproject.content_benchmark_TEST">
+  <Rule id="xccdf_org.ssgproject.content_rule_sshd_disable_root_login" severity="high">
+    <title>Disable SSH Root Login</title>
+    <description>The root user should never <html:pre>log in directly</html:pre> over a network.</description>
+    <rationale>Reduces exposure of a privileged account.</rationale>
+    <fix system="urn:xccdf:fix:script:sh">sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config</fix>
+  </Rule>
+  <Rule id="xccdf_org.ssgproject.content_rule_partition_for_srv" severity="medium">
+    <title>Partition For /srv</title>
+    <description>Kickstart-only remediation, no shell fix available.</description>
+    <fix system="urn:xccdf:fix:script:kickstart">part /srv</fix>
+  </Rule>
+  <Rule id="xccdf_org.ssgproject.content_rule_dual_fix" severity="medium">
+    <title>Dual Fix Rule</title>
+    <description>Has both a shell and an ansible remediation.</description>
+    <fix system="urn:xccdf:fix:script:sh">echo shell-fix</fix>
+    <fix system="urn:xccdf:fix:script:ansible">- name: ansible-fix</fix>
+  </Rule>
+</Benchmark>
+"""
+
+
+class TestScapKb(unittest.TestCase):
+    def _write(self, text, suffix=".xml"):
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        return path
+
+    # -- pure helpers ---------------------------------------------------------
+    def test_tokenize_drops_stopwords_and_short_tokens(self):
+        from vulnscanai.scap_kb import tokenize
+        toks = tokenize("The SSH root Login is a Risk (CVE-2026-1)")
+        for word in ("ssh", "root", "login"):
+            self.assertIn(word, toks)
+        for stop in ("the", "is", "a"):
+            self.assertNotIn(stop, toks)
+
+    def test_cosine_identical_and_disjoint(self):
+        from collections import Counter
+        from vulnscanai.scap_kb import cosine
+        a = Counter({"ssh": 2, "root": 1})
+        self.assertAlmostEqual(cosine(a, a), 1.0)
+        b = Counter({"apache": 3, "webroot": 1})
+        self.assertEqual(cosine(a, b), 0.0)
+        self.assertEqual(cosine(Counter(), a), 0.0)
+
+    def test_best_matches_orders_by_relevance(self):
+        from collections import Counter
+        from vulnscanai.scap_kb import best_matches
+        query = Counter({"ssh": 3, "root": 3, "login": 3, "password": 1})
+        corpus = {
+            "close": Counter({"ssh": 3, "root": 3, "login": 3, "network": 1}),
+            "distant": Counter({"ssh": 1, "firewall": 3, "port": 3}),
+            "unrelated": Counter({"apache": 3, "webroot": 3, "secret": 3}),
+        }
+        matches = best_matches(query, corpus, top_k=2, min_score=0.0, min_overlap=0)
+        ids = [rid for rid, _ in matches]
+        # ranked by similarity, then capped at top_k -- "unrelated" (0 overlap,
+        # score 0.0) ranks last and falls outside top_k=2, not because a gate
+        # rejected it.
+        self.assertEqual(ids, ["close", "distant"])
+
+    def test_best_matches_rejects_single_token_overlap(self):
+        # A candidate can score a *perfect* cosine match on a single shared
+        # token alone (both bags dominated by "nginx") while being otherwise
+        # unrelated -- this is the real failure mode found calibrating against
+        # the live SSG datastream (a port-exposure finding scoring high against
+        # "Uninstall nginx Package" on the "nginx" token alone). min_overlap is
+        # the gate that rejects it; min_score cannot, since the score is 1.0.
+        from collections import Counter
+        from vulnscanai.scap_kb import best_matches
+        query = Counter({"nginx": 5})
+        corpus = {"single_token": Counter({"nginx": 5})}
+        self.assertEqual(
+            best_matches(query, corpus, min_score=0.40, min_overlap=3), [])
+        self.assertEqual(
+            best_matches(query, corpus, min_score=0.40, min_overlap=0),
+            [("single_token", 1.0)])
+
+    # -- parse_fix_rules (hermetic, no real oscap/datastream needed) ---------
+    def test_parse_fix_rules_extracts_fix_and_description(self):
+        from vulnscanai.scap_kb import parse_fix_rules
+        rules = parse_fix_rules(self._write(_FIX_RULES_DS))
+        rid = "xccdf_org.ssgproject.content_rule_sshd_disable_root_login"
+        self.assertIn(rid, rules)
+        self.assertEqual(rules[rid]["title"], "Disable SSH Root Login")
+        # .itertext() must cross the nested <html:pre>, not truncate at it.
+        self.assertIn("log in directly", rules[rid]["description"])
+        self.assertIn("PermitRootLogin no", rules[rid]["fix_text"])
+
+    def test_parse_fix_rules_skips_non_sh_fix_systems(self):
+        from vulnscanai.scap_kb import parse_fix_rules
+        rules = parse_fix_rules(self._write(_FIX_RULES_DS))
+        # Kickstart-only rule has no plain-shell content to ground on.
+        self.assertNotIn(
+            "xccdf_org.ssgproject.content_rule_partition_for_srv", rules)
+
+    def test_parse_fix_rules_keeps_only_sh_fix_of_dual_fix_rule(self):
+        from vulnscanai.scap_kb import parse_fix_rules
+        rules = parse_fix_rules(self._write(_FIX_RULES_DS))
+        rid = "xccdf_org.ssgproject.content_rule_dual_fix"
+        self.assertEqual(rules[rid]["fix_text"], "echo shell-fix")
+
+    def test_parse_fix_rules_missing_file_returns_empty(self):
+        from vulnscanai.scap_kb import parse_fix_rules
+        self.assertEqual(parse_fix_rules("/nonexistent/path.xml"), {})
+
+    # -- ground() wrapper ------------------------------------------------------
+    def test_ground_none_without_datastream(self):
+        from vulnscanai.scap_kb import ground
+        self.assertIsNone(
+            ground("ssh root login", datastream="/nonexistent/path.xml"))
+
+    def test_ground_formats_matched_reference(self):
+        from vulnscanai import scap_kb
+        path = self._write(_FIX_RULES_DS)
+        block = scap_kb.ground(
+            "SSH root login disable weak configuration allows direct root "
+            "login over the network",
+            datastream=path)
+        self.assertIsNotNone(block)
+        self.assertIn("Disable SSH Root Login", block)
+        self.assertIn("PermitRootLogin no", block)
+        self.assertNotIn("Partition For /srv", block)
+
+    def test_ground_no_match_returns_none(self):
+        from vulnscanai import scap_kb
+        path = self._write(_FIX_RULES_DS)
+        self.assertIsNone(scap_kb.ground(
+            "completely unrelated banana recipe text", datastream=path))
+
+    def test_ground_caches_across_calls(self):
+        from unittest import mock
+        from vulnscanai import scap_kb
+        path = self._write(_FIX_RULES_DS)
+        calls = []
+        real_parse = scap_kb.parse_fix_rules
+
+        def counting(p):
+            calls.append(p)
+            return real_parse(p)
+
+        with mock.patch("vulnscanai.scap_kb.parse_fix_rules", side_effect=counting):
+            scap_kb.ground("ssh root login disable", datastream=path)
+            scap_kb.ground("ssh root login disable", datastream=path)
+        self.assertEqual(len(calls), 1)
 
 
 class TestAudit(unittest.TestCase):

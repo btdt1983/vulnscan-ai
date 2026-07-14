@@ -41,7 +41,7 @@ _vulnscan_ai() {
 
     case "$cmd" in
         scan)      opts="--scanner --all --min-severity --no-enrich --pdf --json --sarif --ignore --compliance --list-profiles --compliance-datastream";;
-        fix)       opts="--scan --scanner --all --no-enrich --min-severity --yes --dry-run --pdf --export-script --export-ansible --ignore --offline --no-catalog";;
+        fix)       opts="--scan --scanner --all --no-enrich --min-severity --yes --dry-run --pdf --export-script --export-ansible --ignore --offline --no-catalog --no-scap-grounding";;
         rollback)  opts="--list";;
         report)    opts="-o --output --min-severity";;
         scheduled) opts="--scanner --all --no-enrich --min-severity --plan --html --keep --fail-on";;

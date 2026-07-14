@@ -7,6 +7,7 @@
   "min_severity": "low",
   "enrich": true,
   "offline_catalog": true,
+  "scap_grounding": true,
   "fips_required": false,
   "compliance_profile": "cis-l1",
   "compliance_datastream": null,

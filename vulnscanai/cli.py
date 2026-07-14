@@ -580,8 +580,12 @@ def cmd_fix(cfg: Config, args) -> int:
     def progress(i, total, f):
         _eprint(f"  [{i}/{total}] {f.package or f.primary_cve or f.title}")
 
+    ground = (getattr(cfg, "scap_grounding", True)
+             and not getattr(args, "no_scap_grounding", False))
     remediation.propose_all(provider, findings, on_progress=progress,
-                            offline=offline, use_catalog=use_catalog)
+                            offline=offline, use_catalog=use_catalog,
+                            ground=ground,
+                            datastream=getattr(cfg, "compliance_datastream", None))
 
     # Surface AI failures up front. A failed proposal used to show only an opaque
     # "(AI proposal failed)" per finding, hiding the real reason (e.g. "credit
@@ -812,10 +816,13 @@ def cmd_scheduled(cfg: Config, args) -> int:
                                 args.model or cfg.model, timeout=cfg.timeout,
                                 effort=cfg.claude_effort)
         use_catalog = getattr(cfg, "offline_catalog", True)
+        ground = getattr(cfg, "scap_grounding", True)
+        datastream = getattr(cfg, "compliance_datastream", None)
         if provider.available():
             print(f"  generating remediation plan via {provider.name}/{provider.model} "
                   f"(offline catalog for package fixes)")
-            remediation.propose_all(provider, findings, use_catalog=use_catalog)
+            remediation.propose_all(provider, findings, use_catalog=use_catalog,
+                                    ground=ground, datastream=datastream)
         elif use_catalog:
             print("  generating deterministic offline remediation plan "
                   "(no provider; package/advisory fixes only)")
@@ -1089,6 +1096,9 @@ def build_parser() -> argparse.ArgumentParser:
     catgrp.add_argument("--no-catalog", action="store_true",
                         help="disable the offline catalog; use the AI provider "
                              "for every finding")
+    sp.add_argument("--no-scap-grounding", action="store_true",
+                    help="disable grounding AI prompts with matching SCAP "
+                         "Security Guide hardening-rule snippets")
     sp.set_defaults(func=cmd_fix)
 
     sp = sub.add_parser(

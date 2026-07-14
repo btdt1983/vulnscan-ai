@@ -136,6 +136,11 @@ Plan fixes from the deterministic offline catalog only; never call an AI provide
 .TP
 .B \-\-no\-catalog
 Disable the offline catalog; use the AI provider for every finding.
+.TP
+.B \-\-no\-scap\-grounding
+Disable grounding AI prompts with matching SCAP Security Guide hardening-rule
+snippets (see \fBscap_grounding\fR in the config file). No effect when
+\fBscap-security-guide\fR isn't installed.
 .SS audit
 Show the append\-only remediation audit log. Every fix actually applied (or
 rolled back), from the CLI or the web dashboard, is recorded as one JSON line in

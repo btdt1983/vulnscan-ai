@@ -128,6 +128,15 @@ reasoning; for those, either run a local model (below) or handle them manually
 (`--offline` reports them as "no offline plan" and skips them). Disable the
 catalog entirely with `fix --no-catalog` or `"offline_catalog": false`.
 
+**Config-fix prompts are grounded with vetted SCAP Security Guide snippets, if
+available.** When a host has `scap-security-guide` installed, `fix` looks up a
+lexically-matching hardening rule from its SSG datastream (the same one `scan
+--compliance` uses) and hands the model its peer-reviewed fix script as an
+optional reference, adapted rather than copied verbatim — this cuts down on
+hallucination for ssh/systemd/ports/webroot findings. No datastream installed?
+It's a silent no-op, identical to before. Disable it with `fix
+--no-scap-grounding` or `"scap_grounding": false`.
+
 #### A local model for config-fix reasoning (Ollama)
 
 No API key, no external calls — the AI step runs against a local model.

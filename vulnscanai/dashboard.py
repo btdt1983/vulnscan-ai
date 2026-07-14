@@ -944,7 +944,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                            f"one is a config/service fix. Set a provider with "
                            f"'vulnscan-ai setup' or fix it manually.")))
             try:
-                rem = remediation.propose(provider, target)
+                rem = remediation.propose(
+                    provider, target,
+                    ground=getattr(cfg, "scap_grounding", True),
+                    datastream=getattr(cfg, "compliance_datastream", None))
             except Exception as exc:  # noqa: BLE001
                 return self._html(200, render_fix_result(
                     target.title, fid, None, allow_fix,

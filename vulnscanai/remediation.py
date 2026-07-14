@@ -62,6 +62,15 @@ to localhost in its own config (transactional: backup the config, validate, \
 reload), otherwise restrict the port with the firewall (`firewall-cmd`), \
 otherwise stop+disable the service if it is unused. Never block the SSH port you \
 are connected through.
+- The user message may include a "Reference (optional, from the host's SCAP \
+Security Guide hardening benchmark...)" block: a peer-reviewed script for a \
+LEXICALLY SIMILAR rule, not necessarily an exact match for this finding. Use it \
+only as inspiration for what a correct fix looks like, and TRANSLATE it into \
+this schema — a full-file rewrite becomes "write_files", a one-line edit \
+becomes a non-shell "commands" entry (e.g. `sed -i`). Never copy the \
+reference's shell syntax (heredocs, `>`, `||`, `&&`) into "commands" verbatim; \
+it will be rejected by the no-shell runner. If the reference does not actually \
+match this finding, ignore it and reason from the finding's own details instead.
 
 Respond with ONLY a JSON object, no prose. Replace every <...> placeholder with
 a real value (or null where it says "or null"); never echo a placeholder back.
@@ -367,9 +376,41 @@ def _rewrite_advisory(commands: List[str], advisory: Optional[str]) -> List[str]
     return out
 
 
-def propose(provider: AIProvider, finding: Finding) -> Remediation:
-    """Ask the model for a remediation plan for one finding, then sanitise it."""
-    text = provider.complete(SYSTEM_PROMPT, _finding_brief(finding))
+def _grounding_text(f: Finding) -> str:
+    """Compact text for lexical matching against SCAP Security Guide rules:
+    title + description + the same scanner-hint keys _finding_brief surfaces.
+
+    Deliberately NOT the full _finding_brief() output — its constant field-label
+    boilerplate ("Source scanner:", "CVEs: n/a", "Advisory: n/a", ...) is
+    identical across every finding and would dilute the bag-of-words vector for
+    every query alike without adding any discriminating signal.
+    """
+    parts = [f.title, f.description or ""]
+    for key in ("directive", "recommended", "current", "category", "reason",
+               "service", "process"):
+        val = f.raw.get(key) if isinstance(f.raw, dict) else None
+        if val:
+            parts.append(str(val))
+    return "\n".join(parts)
+
+
+def propose(provider: AIProvider, finding: Finding, *,
+           ground: bool = True, datastream: Optional[str] = None) -> Remediation:
+    """Ask the model for a remediation plan for one finding, then sanitise it.
+
+    For config/service findings (``_CONFIG_SOURCES``), ``ground`` optionally
+    appends a vetted SCAP Security Guide reference snippet to the prompt (see
+    ``scap_kb.ground``) to reduce hallucination. Package/CVE findings never get
+    one — SSG rules are hardening guidance, not CVE patches, and those findings
+    are catalog-first (no AI call) in the common path anyway.
+    """
+    brief = _finding_brief(finding)
+    if ground and finding.source in _CONFIG_SOURCES:
+        from . import scap_kb  # local import, mirrors the catalog import below
+        block = scap_kb.ground(_grounding_text(finding), datastream=datastream)
+        if block:
+            brief = brief + "\n\n" + block
+    text = provider.complete(SYSTEM_PROMPT, brief)
     data = extract_json(text)
 
     commands = [str(c) for c in _as_list(data.get("commands")) if str(c).strip()]
@@ -422,7 +463,8 @@ PROPOSAL_FAILED = "(AI proposal failed)"
 
 def propose_all(provider: AIProvider, findings: List[Finding],
                 on_progress: Optional[Callable[[int, int, Finding], None]] = None,
-                *, offline: bool = False, use_catalog: bool = True) -> None:
+                *, offline: bool = False, use_catalog: bool = True,
+                ground: bool = True, datastream: Optional[str] = None) -> None:
     """Fill in ``finding.remediation`` for every finding.
 
     By default the deterministic offline catalog plans package/advisory findings
@@ -435,7 +477,8 @@ def propose_all(provider: AIProvider, findings: List[Finding],
     ``offline`` forces catalog-only: an unhandleable finding gets a clear no-plan
     Remediation instead of an AI call, so ``fix`` runs fully air-gapped.
     ``use_catalog=False`` restores the old AI-for-everything behaviour (the
-    ``fix --no-catalog`` escape hatch).
+    ``fix --no-catalog`` escape hatch). ``ground``/``datastream`` are forwarded
+    to :func:`propose` (see there for the SCAP grounding behaviour).
     """
     from . import catalog  # local import avoids an import cycle (catalog -> us)
 
@@ -455,7 +498,7 @@ def propose_all(provider: AIProvider, findings: List[Finding],
                                         and provider.available()))
             continue
         try:
-            f.remediation = propose(provider, f)
+            f.remediation = propose(provider, f, ground=ground, datastream=datastream)
         except ProviderError as exc:
             f.remediation = Remediation(
                 summary=PROPOSAL_FAILED,

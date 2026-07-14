@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.5
+Version:        0.4.6
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -116,6 +116,31 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Tue Jul 14 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.6-1
+- SCAP-grounded AI remediation prompts: for config/service findings
+  (ssh/systemd/ports/webroot) the `fix` AI step is now optionally grounded with
+  a vetted remediation snippet retrieved from the host's own SCAP Security
+  Guide (SSG) XCCDF datastream (the same one `scan --compliance` reads) — real
+  peer-reviewed fix scripts already sitting on the host, unused until now. New
+  `vulnscanai/scap_kb.py`: pure stdlib lexical matching (bag-of-words cosine,
+  no ML/embeddings) between the finding's text and each SSG rule's
+  title/description; a candidate must clear BOTH a cosine-similarity floor
+  AND a minimum number of distinct overlapping tokens, since a short rule
+  title sharing a single word with the finding (e.g. an exposed-port finding
+  vs. "Uninstall nginx Package") can otherwise out-score a genuinely relevant
+  match. The model is instructed to adapt the reference into vulnscan-ai's own
+  schema, never copy its shell syntax verbatim (still enforced by the existing
+  no-shell command screen either way). Silent no-op when
+  `scap-security-guide` isn't installed or nothing clears the threshold — same
+  behaviour as before this change. New config key `scap_grounding` (default
+  true) and `fix --no-scap-grounding` to disable it; reuses the existing
+  `compliance_datastream` config key for a custom datastream path.
+  Package/CVE findings (dnf/oscap) are unaffected (catalog-first, no AI call
+  in the common path; SSG hardening rules aren't CVE patches anyway). 293
+  tests (+16), bandit clean, live-verified against this host's installed SSG
+  datastream (correct grounding for a real ssh finding, correctly absent for
+  an unrelated one and for every package finding).
+
 * Sun Jul 12 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.5-1
 - FIPS-posture scanner (`fips`, 9th scanner): audits whether the host's
   cryptography is actually hardened. Reads /proc/sys/crypto/fips_enabled,
