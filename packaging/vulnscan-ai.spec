@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.6
+Version:        0.4.7
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -116,6 +116,22 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sun Jul 19 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.7-1
+- Correctness & security hardening from a two-agent adversarial code review.
+  Truthfulness: an auto-rollback whose file restore OR service revert failed no
+  longer reports a clean rollback (the CLI + audit log were claiming a reverted,
+  healthy host while it was half-reverted); an empty prose-only fix plan is no
+  longer reported as "applied" (the dashboard apply path was writing a false
+  audit entry for a no-op). Security: the exported bash script now uses a unique
+  heredoc delimiter so crafted file content can't break out and inject root
+  commands; OVAL feed decompression is size-capped (decompression-bomb guard,
+  runs as root) and refuses a DOCTYPE. Robustness: malformed CVE-feed JSON
+  (NVD/EPSS/KEV) can no longer abort a whole scan; a package-less oscap advisory
+  is no longer dropped on an empty-but-successful updateinfo set (it was hiding
+  real advisories). Plus null-tolerant report/dashboard rendering, version-
+  ordered (not install-ordered) kernel-currency check, corrupt-config tolerance,
+  string-aware model-JSON extraction, and a capped dashboard request body. 305
+  tests, bandit clean. No user-facing surface change.
 * Tue Jul 14 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.6-1
 - SCAP-grounded AI remediation prompts: for config/service findings
   (ssh/systemd/ports/webroot) the `fix` AI step is now optionally grounded with
