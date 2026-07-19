@@ -196,8 +196,13 @@ for dist in "${!DISTS[@]}"; do
         # Changelog straight from the package(s) so it always matches what is
         # published. HTML-escape it (it contains <email> and other markup).
         echo "<details><summary>Changelog</summary><pre>"
+        pkg_first=1
         for pkg in "$REPO_ROOT/$dist/"*.rpm; do
             [ -e "$pkg" ] || continue
+            pkgname="$(rpm -qp --qf '%{NAME}' "$pkg" 2>/dev/null)"
+            [ "$pkg_first" = 1 ] || echo
+            pkg_first=0
+            echo "<strong>${pkgname}</strong>"
             rpm -qp --changelog "$pkg" 2>/dev/null \
                 | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
         done
