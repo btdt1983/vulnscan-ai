@@ -129,13 +129,17 @@ def parse_nvd(data: Dict, limit: int = 50) -> List[NewsItem]:
     vulns = data.get("vulnerabilities") if isinstance(data, dict) else None
     out: List[NewsItem] = []
     for entry in vulns or []:
-        cve = (entry or {}).get("cve") or {}
+        if not isinstance(entry, dict):
+            continue
+        cve = entry.get("cve")
+        if not isinstance(cve, dict):
+            continue
         cid = str(cve.get("id", "")).upper()
         if not cid:
             continue
         desc = ""
         for d in cve.get("descriptions") or []:
-            if d.get("lang") == "en":
+            if isinstance(d, dict) and d.get("lang") == "en":
                 desc = d.get("value", "")
                 break
         sev, score = _nvd_severity(cve.get("metrics") or {})
@@ -173,6 +177,8 @@ def parse_epss(data: Dict) -> Dict[str, float]:
     out: Dict[str, float] = {}
     rows = data.get("data") if isinstance(data, dict) else None
     for row in rows or []:
+        if not isinstance(row, dict):
+            continue
         cve = str(row.get("cve", "")).upper()
         try:
             score = float(row.get("epss"))
@@ -445,7 +451,9 @@ def kev_cve_set(cfg) -> Set[str]:
     except (http.HttpError, ValueError):
         return set()
     vulns = data.get("vulnerabilities") if isinstance(data, dict) else None
-    return {str(v.get("cveID", "")).upper() for v in (vulns or []) if v.get("cveID")}
+    return {str(v.get("cveID", "")).upper()
+            for v in (vulns or [])
+            if isinstance(v, dict) and v.get("cveID")}
 
 
 # --------------------------------------------------------------------------- #

@@ -61,17 +61,18 @@ def extract_json(text: str) -> dict:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    start = text.find("{")
-    if start != -1:
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start:i + 1])
-                    except json.JSONDecodeError:
-                        break
+    # Scan for a '{' from which a complete JSON object decodes. raw_decode is
+    # string/escape aware, unlike a naive brace counter — which miscounts braces
+    # inside string values (e.g. an embedded `server { ... }` nginx config) and
+    # then drops a legitimate plan.
+    decoder = json.JSONDecoder()
+    idx = text.find("{")
+    while idx != -1:
+        try:
+            obj, _ = decoder.raw_decode(text[idx:])
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict):
+            return obj
+        idx = text.find("{", idx + 1)
     raise ProviderError("could not parse JSON from model response")

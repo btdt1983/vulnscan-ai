@@ -340,7 +340,7 @@ def _rewrite_advisory(commands: List[str], advisory: Optional[str]) -> List[str]
     Garbage tokens that don't look like an advisory id are dropped.
     """
     adv = (advisory or "").strip()
-    finding_adv = adv if _ADVISORY_RE.match(adv) else None
+    finding_adv = adv if _ADVISORY_RE.fullmatch(adv) else None
     out: List[str] = []
     for c in commands:
         if "--advisory" not in c:
@@ -627,6 +627,13 @@ def apply(finding: Finding, dry_run: bool = False,
     rem.rolled_back = False
     if _is_transactional(rem):
         return _apply_transactional(finding, dry_run, state_dir, on_step)
+    # Non-transactional (package) path: a plan with no commands changes nothing
+    # on the host, so never report it as "applied" (a prose-only AI plan is the
+    # common case). The CLI skips such findings, but the dashboard apply path
+    # calls apply() directly, so the guarantee has to live here too.
+    if not rem.commands:
+        rem.applied = False
+        return False
     ok = _apply_simple(rem, dry_run, on_step)
     # A package fix's reboot need is a FACT once it has actually run, not the
     # AI/catalog prediction: overwrite requires_reboot with the effective-state
@@ -744,19 +751,25 @@ def _apply_transactional(finding: Finding, dry_run: bool,
                 emit(_run(rc))
         # Revert runtime state from the restored config. daemon-reload first so
         # a removed/restored unit drop-in actually takes effect before restart.
+        service_ok = True
         if rem.service and rem.restart_mode in ("reload", "restart"):
             emit(_run("systemctl daemon-reload"))
-            emit(_systemctl(rem.restart_mode, rem.service))
-        # If the file restore itself errored, the host may be in a half-reverted
-        # state — surface it loudly rather than reporting a clean rollback.
-        if not restore_clean:
+            sc = _systemctl(rem.restart_mode, rem.service)
+            emit(sc)
+            service_ok = sc.get("status") == "ok"
+        # If the file restore or the service revert did not complete cleanly the
+        # host may be half-reverted — surface it loudly AND report the rollback
+        # as incomplete, rather than stamping a clean rollback that the CLI and
+        # the audit log would then present as "reverted, service left healthy".
+        clean = restore_clean and service_ok
+        if not clean:
             emit({"command": "ROLLBACK INCOMPLETE",
                   "status": "error",
-                  "detail": "one or more files could not be restored — "
-                            "inspect the backup dir and fix manually: "
+                  "detail": "rollback did not complete cleanly — inspect the "
+                            "backup dir and fix manually: "
                             f"{rem.backup_dir}"})
         rem.applied = False
-        rem.rolled_back = True
+        rem.rolled_back = clean
         return False
 
     # 2. Write the created/replaced files (no shell) BEFORE the commands, so a

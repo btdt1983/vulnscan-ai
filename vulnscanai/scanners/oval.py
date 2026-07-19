@@ -15,6 +15,7 @@ import bz2
 import gzip
 import os
 import time
+import zlib
 from typing import List, Optional, Tuple
 
 from .. import http
@@ -77,11 +78,27 @@ def candidate_urls(distro_id: str, major: str) -> List[str]:
     return [t.format(major=major) for t in templates]
 
 
+# http caps only the *compressed* download; a hostile/MITM'd feed can still
+# expand a small body into terabytes in RAM (decompression bomb). Bound the
+# decompressed size the way feeds.py already bounds the Oracle OVAL feed.
+_MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024
+
+
 def _decompress(url: str, raw: bytes) -> bytes:
     if url.endswith(".bz2"):
-        return bz2.decompress(raw)
+        dec = bz2.BZ2Decompressor()
+        out = dec.decompress(raw, _MAX_DECOMPRESSED_BYTES + 1)
+        if len(out) > _MAX_DECOMPRESSED_BYTES or not dec.eof:
+            raise RuntimeError("OVAL feed decompressed past the size cap "
+                               "(possible decompression bomb)")
+        return out
     if url.endswith(".gz"):
-        return gzip.decompress(raw)
+        dec = zlib.decompressobj(16 + zlib.MAX_WBITS)  # 16 = gzip framing
+        out = dec.decompress(raw, _MAX_DECOMPRESSED_BYTES + 1)
+        if len(out) > _MAX_DECOMPRESSED_BYTES or dec.unconsumed_tail:
+            raise RuntimeError("OVAL feed decompressed past the size cap "
+                               "(possible decompression bomb)")
+        return out + dec.flush()
     return raw
 
 

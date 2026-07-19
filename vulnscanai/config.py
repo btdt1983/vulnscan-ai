@@ -132,8 +132,15 @@ class Config:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         data: Dict[str, Any] = {}
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
+            # A corrupt/unreadable existing config must not crash the one command
+            # trying to fix the config (setup wizard, --set-password): start fresh.
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (ValueError, OSError):
+                pass
         data.update(updates)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)

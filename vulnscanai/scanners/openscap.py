@@ -47,9 +47,18 @@ def parse_oval_definitions(oval_path: str) -> Dict[str, dict]:
     Streams the (large) feed with iterparse so we don't hold it all in memory.
     """
     out: Dict[str, dict] = {}
+    # The OVAL feed is fetched from a remote origin. ElementTree resolves no
+    # external entities/DTDs (no XXE file read), but internal-subset entity
+    # expansion ("billion laughs") needs a DOCTYPE — refuse one before parsing,
+    # as feeds._safe_xml does. Legit vendor OVAL carries no DOCTYPE.
     try:
-        # OVAL feed downloaded from the distro's official source over TLS;
-        # ElementTree resolves no external entities/DTDs (no XXE file read).
+        with open(oval_path, "rb") as fh:
+            head = fh.read(1024 * 1024)
+    except OSError:
+        return out
+    if b"<!DOCTYPE" in head or b"<!ENTITY" in head:
+        return out
+    try:
         context = ET.iterparse(oval_path, events=("end",))  # nosec B314
     except (OSError, ET.ParseError):
         return out

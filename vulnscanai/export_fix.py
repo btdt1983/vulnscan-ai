@@ -33,14 +33,24 @@ def _backup_set(rem) -> List[str]:
 def _bash_write_lines(wf: dict, indent: str) -> List[str]:
     """Render one write_files entry as a heredoc (works in a real shell)."""
     path, mode = wf["path"], wf.get("mode", "0644")
+    content = wf["content"].rstrip("\n")
+    # Pick a heredoc delimiter that appears on no line of the content. A fixed,
+    # guessable delimiter lets crafted/hallucinated content (a line equal to the
+    # sentinel) terminate the heredoc early, turning the rest of the content into
+    # shell commands the operator runs as root. Extending until unique closes
+    # that break-out.
+    delim = "VULNSCANAI_EOF"
+    body_lines = content.split("\n")
+    while any(line.strip() == delim for line in body_lines):
+        delim += "_EOF"
     lines: List[str] = []
     parent = os.path.dirname(path)
     if parent:
         lines.append(f"{indent}mkdir -p {shlex.quote(parent)}")
     # Heredoc body + terminator must sit at column 0, so they are not indented.
-    lines.append(f"{indent}cat > {shlex.quote(path)} <<'VULNSCANAI_EOF'")
-    lines.append(wf["content"].rstrip("\n"))
-    lines.append("VULNSCANAI_EOF")
+    lines.append(f"{indent}cat > {shlex.quote(path)} <<'{delim}'")
+    lines.append(content)
+    lines.append(delim)
     lines.append(f"{indent}chmod {mode} {shlex.quote(path)}")
     return lines
 

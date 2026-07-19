@@ -98,6 +98,13 @@ class PatchedStateEnricher:
     def enrich(self, findings: List[Finding]) -> List[Finding]:
         upgradable = self.upgradable()
         actionable = self.actionable_advisories()
+        # An EMPTY updateinfo set is ambiguous: it can mean "nothing actionable"
+        # OR "updateinfo metadata isn't populated" (minimal repos / stale cache).
+        # Treat only a NON-empty set as an authoritative advisory signal, so a
+        # package-less oscap finding is never dropped on the strength of an empty
+        # set alone — that would silently hide a real, unpatched advisory.
+        if not actionable:
+            actionable = None
         if upgradable is None and actionable is None:
             return findings                      # no usable signal -> drop nothing
         for f in findings:

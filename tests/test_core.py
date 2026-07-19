@@ -364,8 +364,10 @@ class TestTransactionalApply(unittest.TestCase):
         self.assertEqual(f.remediation.apply_results[-1]["status"], "error")
 
     def test_auto_rollback_surfaces_incomplete_restore(self):
-        # When the file restore during an auto-rollback errors, an explicit
-        # ROLLBACK INCOMPLETE error step must be recorded (half-reverted host).
+        # When the file restore during an auto-rollback errors the host is
+        # half-reverted: rolled_back must be FALSE (an honest "not a clean
+        # rollback") AND an explicit ROLLBACK INCOMPLETE error step recorded.
+        # A True flag here would make the CLI + audit log claim a clean rollback.
         import vulnscanai.remediation as R
         orig = R._restore
         R._restore = lambda d: [{"command": "restore x", "status": "error",
@@ -378,7 +380,7 @@ class TestTransactionalApply(unittest.TestCase):
                     validate_cmd="false")   # force rollback
                 ok = apply(f, dry_run=False, state_dir=tmp)
                 self.assertFalse(ok)
-                self.assertTrue(f.remediation.rolled_back)
+                self.assertFalse(f.remediation.rolled_back)
                 self.assertTrue(any(
                     r["command"] == "ROLLBACK INCOMPLETE" and r["status"] == "error"
                     for r in f.remediation.apply_results))
@@ -406,7 +408,10 @@ class TestTransactionalApply(unittest.TestCase):
             self.assertIn(restart, cmds)
             self.assertLess(cmds.index("systemctl daemon-reload"),
                             cmds.index(restart))
-            self.assertTrue(f.remediation.rolled_back)
+            # The nonexistent unit's restart fails, so the runtime state could
+            # not be reverted: the rollback is honestly reported incomplete
+            # (files restored, service not) rather than falsely clean.
+            self.assertFalse(f.remediation.rolled_back)
 
 
 class TestSshScanner(unittest.TestCase):
@@ -3695,6 +3700,141 @@ class TestFipsPosture(unittest.TestCase):
                                    required=required)):
             f = fp.FipsPostureScanner(_Cfg()).scan()
         self.assertEqual(self._cats(f), {"required-off"})
+
+
+class TestAuditRegressions(unittest.TestCase):
+    """Regressions for the 0.4.7 correctness/security fixes."""
+
+    def test_empty_plan_not_applied(self):
+        # A prose-only plan (no commands, no metadata) must never report applied.
+        f = _finding(source="dnf")
+        f.remediation = Remediation(commands=[])
+        self.assertFalse(apply(f, dry_run=False))
+        self.assertFalse(f.remediation.applied)
+
+    def test_export_heredoc_delimiter_avoids_sentinel(self):
+        # Content containing the sentinel line must not close the heredoc early
+        # (which would turn the trailing lines into root shell commands).
+        f = _finding(source="ssh", package=None, cve_ids=[], severity="moderate")
+        f.remediation = Remediation(write_files=[{
+            "path": "/etc/x.conf",
+            "content": "line1\nVULNSCANAI_EOF\nrm -rf /\n"}])
+        script = export_fix.to_bash_script([f])
+        self.assertIn("<<'VULNSCANAI_EOF_EOF'", script)   # delimiter extended
+        self.assertIn("\nVULNSCANAI_EOF_EOF\n", script)   # its terminator
+        self.assertIn("rm -rf /", script)                 # stays inside the body
+
+    def test_oval_decompress_rejects_bomb(self):
+        import bz2
+        import gzip
+        import vulnscanai.scanners.oval as O
+        payload = b"A" * 100000
+        comp = bz2.compress(payload)
+        orig = O._MAX_DECOMPRESSED_BYTES
+        try:
+            O._MAX_DECOMPRESSED_BYTES = 1000
+            with self.assertRaises(RuntimeError):
+                O._decompress("feed.bz2", comp)
+            O._MAX_DECOMPRESSED_BYTES = 10 ** 9
+            self.assertEqual(O._decompress("feed.bz2", comp), payload)
+            self.assertEqual(O._decompress("feed.gz", gzip.compress(payload)),
+                             payload)
+        finally:
+            O._MAX_DECOMPRESSED_BYTES = orig
+
+    def test_severity_none_tolerated(self):
+        from vulnscanai.models import ComplianceRule
+        f = Finding.from_dict({"source": "dnf", "title": "t", "severity": None,
+                               "cve_ids": ["CVE-2026-1"]})
+        self.assertEqual(f.severity, "unknown")
+        report.build_blocks([f], "host", "now")   # must not raise
+        export.build_json([f], "host", "now")     # must not raise
+        r = ComplianceRule.from_dict({"rule_id": "x", "severity": None})
+        self.assertEqual(r.severity, "unknown")
+
+    def test_feeds_parsers_skip_non_dict(self):
+        self.assertEqual(feeds.parse_nvd({"vulnerabilities": ["oops", None]}), [])
+        self.assertEqual(feeds.parse_epss({"data": ["oops", 3]}), {})
+        orig = feeds.http.get_json
+        feeds.http.get_json = lambda *a, **k: {
+            "vulnerabilities": ["x", {"cveID": "CVE-2026-1"}]}
+        try:
+            self.assertEqual(feeds.kev_cve_set(Config()), {"CVE-2026-1"})
+        finally:
+            feeds.http.get_json = orig
+
+    def test_http_decode_json_non_json_raises(self):
+        from vulnscanai import http
+        with self.assertRaises(http.HttpError):
+            http._decode_json("http://x", b"<html>not json</html>")
+        self.assertEqual(http._decode_json("http://x", b'{"a": 1}'), {"a": 1})
+
+    def test_extract_json_braces_in_string_value(self):
+        text = ('Here is the plan:\n'
+                '{"summary": "fix", "write_files": '
+                '[{"path": "/etc/nginx.conf", '
+                '"content": "server { listen 80; }"}]}\nThanks!')
+        obj = extract_json(text)
+        self.assertEqual(obj["write_files"][0]["content"],
+                         "server { listen 80; }")
+
+    def test_container_inspect_non_list(self):
+        import vulnscanai.scanners.container as C
+        orig = C.run
+        C.run = lambda *a, **k: (0, "null", "")   # inspect returns JSON null
+        try:
+            self.assertEqual(C._inspect("podman", ["abc"]), [])
+        finally:
+            C.run = orig
+
+    def test_write_user_config_tolerates_corrupt(self):
+        with tempfile.TemporaryDirectory() as home:
+            orig_home = os.environ.get("HOME")
+            os.environ["HOME"] = home
+            try:
+                cfgdir = os.path.join(home, ".config", "vulnscan-ai")
+                os.makedirs(cfgdir, exist_ok=True)
+                with open(os.path.join(cfgdir, "config.json"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write("{ this is not json")
+                path = Config().write_user_config({"provider": "openai"})
+                with open(path, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh)["provider"], "openai")
+            finally:
+                if orig_home is not None:
+                    os.environ["HOME"] = orig_home
+
+    def test_applicability_empty_actionable_keeps_oscap(self):
+        from vulnscanai.scanners.applicability import PatchedStateEnricher
+        enr = PatchedStateEnricher(Config())
+        enr.upgradable = lambda: {"bash"}            # updates clearly exist
+        enr.actionable_advisories = lambda: set()    # but updateinfo is EMPTY
+        oscap = _finding(source="oscap", package=None, advisory="RHSA-2026:9",
+                         cve_ids=["CVE-2026-9"], severity="important")
+        enr.enrich([oscap])
+        self.assertFalse(oscap.already_patched)      # must NOT be dropped
+
+    def test_kernel_version_order_not_install_order(self):
+        import vulnscanai.scanners.effective_state as E
+        # install order (rpm -q --last) lists the newest-INSTALLED first, but it
+        # is an OLDER version than the running kernel (downgrade / out-of-order).
+        orig_i, orig_r = E.installed_kernels, E.running_kernel
+        E.installed_kernels = lambda: ["5.14.0-100.el9.x86_64",
+                                       "5.14.0-200.el9.x86_64"]
+        E.running_kernel = lambda: "5.14.0-200.el9.x86_64"
+        try:
+            self.assertEqual(E.newest_installed_kernel(),
+                             "5.14.0-200.el9.x86_64")
+            self.assertFalse(E._kernel_outdated())   # running IS newest version
+        finally:
+            E.installed_kernels, E.running_kernel = orig_i, orig_r
+
+    def test_apply_service_states_null_units(self):
+        f = _finding(source="dnf", severity="critical")
+        f.runtime_state = "inactive"
+        f.raw = {"service_units": None}
+        apply_service_states([f])                    # must not raise
+        self.assertEqual(f.severity, "low")
 
 
 if __name__ == "__main__":

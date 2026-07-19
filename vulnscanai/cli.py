@@ -193,12 +193,15 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
             _eprint(f"  - {suppressed} finding(s) suppressed by baseline")
     if enrich and findings:
         _eprint(f"  > enriching {len(findings)} finding(s) from CVE feeds...")
-        NvdEnricher(cfg).enrich(findings)
-        if cfg.vendor_state_filter:
-            findings, dropped = apply_vendor_states(findings)
-            if dropped:
-                _eprint(f"  - {dropped} finding(s) dropped "
-                        f"(Red Hat: not affected)")
+        try:
+            NvdEnricher(cfg).enrich(findings)
+            if cfg.vendor_state_filter:
+                findings, dropped = apply_vendor_states(findings)
+                if dropped:
+                    _eprint(f"  - {dropped} finding(s) dropped "
+                            f"(Red Hat: not affected)")
+        except Exception as exc:  # noqa: BLE001
+            _eprint(f"  ! CVE enrichment failed (findings kept): {exc}")
     # Already-patched: drop package findings dnf can no longer act on (a fix
     # exists in the metadata but no installable update — the common lingering-
     # old-kernel case). Local dnf query; runs regardless of network enrichment.
@@ -226,12 +229,16 @@ def do_scan(cfg: Config, scanners: List[str], enrich: bool,
         ex = ExploitEnricher(cfg)
         if ex.available():
             _eprint("  > checking exploitation intel (CISA KEV, EPSS)...")
-            ex.enrich(findings)
-            findings, raised = apply_exploit_priority(findings)
-            kev = sum(1 for f in findings if f.exploited)
-            if kev:
-                _eprint(f"  ! {kev} finding(s) actively exploited (CISA KEV)"
-                        f"{f'; {raised} raised to important' if raised else ''}")
+            try:
+                ex.enrich(findings)
+                findings, raised = apply_exploit_priority(findings)
+                kev = sum(1 for f in findings if f.exploited)
+                if kev:
+                    _eprint(f"  ! {kev} finding(s) actively exploited (CISA "
+                            f"KEV){f'; {raised} raised to important' if raised else ''}")
+            except Exception as exc:  # noqa: BLE001
+                _eprint(f"  ! exploit-intel enrichment failed (findings kept): "
+                        f"{exc}")
     return findings
 
 

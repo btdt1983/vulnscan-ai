@@ -114,10 +114,21 @@ def _request(
     raise HttpError(0, str(last_exc) if last_exc else "request failed")
 
 
+def _decode_json(url: str, raw: bytes) -> Any:
+    """Decode a JSON response body. A non-JSON / undecodable HTTP-200 body (an
+    HTML error page, a truncated stream, non-UTF-8 bytes) becomes an HttpError,
+    so a caller that already catches HttpError fails just that one request
+    instead of letting a ValueError abort the whole scan / fix run."""
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HttpError(0, f"non-JSON response from {url}: {exc}") from exc
+
+
 def get_json(url: str, headers: Optional[Dict[str, str]] = None,
              timeout: int = DEFAULT_TIMEOUT) -> Any:
     raw = _request("GET", url, headers=headers, timeout=timeout)
-    return json.loads(raw.decode("utf-8"))
+    return _decode_json(url, raw)
 
 
 def get_bytes(url: str, headers: Optional[Dict[str, str]] = None,
@@ -134,4 +145,4 @@ def post_json(url: str, payload: Dict[str, Any],
         hdrs.update(headers)
     body = json.dumps(payload).encode("utf-8")
     raw = _request("POST", url, headers=hdrs, data=body, timeout=timeout)
-    return json.loads(raw.decode("utf-8"))
+    return _decode_json(url, raw)

@@ -68,7 +68,15 @@ class Remediation:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Remediation":
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in d.items() if k in known})
+        rem = cls(**{k: v for k, v in d.items() if k in known})
+        # Tolerate null risk/confidence from a corrupt/externally-produced file;
+        # the report and dashboard format them directly.
+        if not isinstance(rem.risk, str):
+            rem.risk = "unknown"
+        if (not isinstance(rem.confidence, (int, float))
+                or isinstance(rem.confidence, bool)):
+            rem.confidence = 0.0
+        return rem
 
 
 @dataclass
@@ -146,6 +154,10 @@ class Finding:
         rem = d.pop("remediation", None)
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         finding = cls(**{k: v for k, v in d.items() if k in known})
+        # Tolerate a null/missing severity in a hand-edited or externally
+        # produced findings.json; every renderer calls .severity.lower()/.upper().
+        if not isinstance(finding.severity, str) or not finding.severity:
+            finding.severity = "unknown"
         if rem:
             finding.remediation = Remediation.from_dict(rem)
         return finding
@@ -198,7 +210,10 @@ class ComplianceRule:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "ComplianceRule":
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in d.items() if k in known})
+        rule = cls(**{k: v for k, v in d.items() if k in known})
+        if not isinstance(rule.severity, str) or not rule.severity:
+            rule.severity = "unknown"
+        return rule
 
 
 @dataclass
@@ -400,7 +415,7 @@ def apply_service_states(findings: List[Finding]) -> Tuple[List[Finding], int]:
             continue
         if severity_rank(f.severity) <= severity_rank("low"):
             continue  # already at/below the floor; just leave the annotation
-        unit_list = f.raw.get("service_units", [])
+        unit_list = f.raw.get("service_units") or []
         units = ", ".join(unit_list) or "its service"
         verb = "are" if len(unit_list) > 1 else "is"
         orig = f.severity

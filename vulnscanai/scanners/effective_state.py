@@ -25,6 +25,7 @@ findings are independent posture findings that no enricher reconciles away).
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from ..models import Finding
@@ -69,10 +70,19 @@ def installed_kernels() -> List[str]:
     return out_list
 
 
+def _version_key(nvra: str):
+    """Natural-order sort key so kernel builds compare by VERSION, not install
+    order. ``rpm -q --last`` orders by install TIME, which is not the same as
+    newest-version after a kernel downgrade or an out-of-order (re)install."""
+    return [(0, int(p)) if p.isdigit() else (1, p)
+            for p in re.split(r"(\d+)", nvra) if p]
+
+
 def newest_installed_kernel() -> Optional[str]:
-    """The most recently installed ``kernel`` build's version-release.arch."""
+    """The newest installed ``kernel`` build's version-release.arch (by version,
+    not by install order)."""
     kernels = installed_kernels()
-    return kernels[0] if kernels else None
+    return max(kernels, key=_version_key) if kernels else None
 
 
 def _kernel_outdated() -> bool:
@@ -84,7 +94,7 @@ def _kernel_outdated() -> bool:
     kernels = installed_kernels()
     if not kernels or running not in kernels:
         return False
-    return running != kernels[0]
+    return running != max(kernels, key=_version_key)
 
 
 def _needs_restarting_reboot() -> Optional[bool]:

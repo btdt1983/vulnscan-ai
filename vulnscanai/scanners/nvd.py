@@ -99,8 +99,10 @@ class NvdEnricher:
                 if self._enrich_redhat(f, cve):
                     continue
                 self._enrich_nvd(f, cve)
-            except http.HttpError:
-                # Network/feed problems must never abort a scan.
+            except (http.HttpError, ValueError, KeyError, TypeError,
+                    AttributeError, IndexError):
+                # Network problems OR an unexpected response shape must never
+                # abort a scan — enrichment is best-effort, per finding.
                 continue
         return findings
 
@@ -155,22 +157,32 @@ class NvdEnricher:
             time.sleep(0.7)
         url = f"{self.config.nvd_api}?cveId={cve}"
         data = http.get_json(url, headers=headers, timeout=self.config.timeout)
-        vulns = data.get("vulnerabilities") or []
-        if not vulns:
+        vulns = data.get("vulnerabilities") if isinstance(data, dict) else None
+        if not vulns or not isinstance(vulns[0], dict):
             return False
-        cve_obj = vulns[0].get("cve", {})
-        descs = cve_obj.get("descriptions", [])
-        for d in descs:
-            if d.get("lang") == "en":
-                if d["value"] not in f.description:
-                    f.description = (f.description + "\n\n" + d["value"]).strip()
+        cve_obj = vulns[0].get("cve")
+        if not isinstance(cve_obj, dict):
+            return False
+        for d in cve_obj.get("descriptions") or []:
+            if isinstance(d, dict) and d.get("lang") == "en":
+                val = d.get("value") or ""
+                if val and val not in f.description:
+                    f.description = (f.description + "\n\n" + val).strip()
                 break
-        metrics = cve_obj.get("metrics", {})
+        metrics = cve_obj.get("metrics") or {}
+        if not isinstance(metrics, dict):
+            metrics = {}
         for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-            if metrics.get(key):
-                cvss = metrics[key][0].get("cvssData", {})
+            arr = metrics.get(key)
+            if arr and isinstance(arr[0], dict):
+                cvss = arr[0].get("cvssData")
+                if not isinstance(cvss, dict):
+                    cvss = {}
                 if f.cvss_score is None and cvss.get("baseScore") is not None:
-                    f.cvss_score = float(cvss["baseScore"])
+                    try:
+                        f.cvss_score = float(cvss["baseScore"])
+                    except (TypeError, ValueError):
+                        pass
                 f.cvss_vector = f.cvss_vector or cvss.get("vectorString")
                 break
         return True

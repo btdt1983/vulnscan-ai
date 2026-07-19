@@ -672,8 +672,15 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return self.server.sessions.valid(self._session_token())  # type: ignore[attr-defined]
 
     def _body_params(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        data = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            return {}
+        # These endpoints (login/fix) carry tiny forms; cap the read so an
+        # unbounded Content-Length can't drive memory use (reachable pre-auth).
+        if length <= 0 or length > 64 * 1024:
+            return {}
+        data = self.rfile.read(length).decode("utf-8", "replace")
         return {k: v[0] for k, v in parse_qs(data).items()}
 
     def _html(self, status: int, body: str, cookie: Optional[str] = None):
@@ -866,8 +873,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def _serve_news(self):
         srv = self.server  # type: ignore[attr-defined]
         self._maybe_refresh_news(srv)
-        source = parse_qs(self.path.split("?", 1)[1])["source"][0] \
-            if "?" in self.path and "source=" in self.path else ""
+        qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+        source = qs.get("source", [""])[0]
         findings, _ = self._load_findings()
         relevant = {c.upper() for f in findings for c in (f.cve_ids or [])}
         self._html(200, render_news(

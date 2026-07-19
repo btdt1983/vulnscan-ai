@@ -279,6 +279,8 @@ def _inspect(runtime: str, ids: List[str]) -> List[Dict]:
         data = json.loads(out)
     except json.JSONDecodeError:
         return []
+    if not isinstance(data, list):
+        return []                       # a null/scalar `inspect` body, not a list
     return [d for d in data if isinstance(d, dict)]
 
 
