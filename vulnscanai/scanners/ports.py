@@ -25,6 +25,9 @@ import sys
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from ..models import Finding
+from ..net_classify import PLAINTEXT_PORTS as _PLAINTEXT
+from ..net_classify import SENSITIVE_PORTS as _SENSITIVE
+from ..net_classify import classify  # re-exported: tests import this from here
 from .base import Scanner, have, run
 
 # A port matcher: (proto, lo, hi). proto is "tcp"/"udp", or None for both.
@@ -38,39 +41,12 @@ _SERVICE_PORTS = {
     "redis": "6379/tcp", "mongodb": "27017/tcp", "vnc-server": "5900/tcp",
 }
 
-# Plaintext / legacy protocols that should not be exposed (port -> label).
-_PLAINTEXT: Dict[int, str] = {
-    20: "ftp-data", 21: "ftp", 23: "telnet", 69: "tftp", 79: "finger",
-    161: "snmp", 162: "snmp-trap", 512: "rexec", 513: "rlogin", 514: "rsh",
-    873: "rsync", 2049: "nfs",
-}
-# Sensitive services (databases/caches/brokers) that should stay off the network.
-_SENSITIVE: Dict[int, str] = {
-    1433: "mssql", 1521: "oracle", 2379: "etcd", 2380: "etcd",
-    3306: "mysql/mariadb", 5432: "postgresql", 5672: "amqp/rabbitmq",
-    5984: "couchdb", 6379: "redis", 9042: "cassandra", 9200: "elasticsearch",
-    9300: "elasticsearch", 11211: "memcached", 15672: "rabbitmq-mgmt",
-    27017: "mongodb", 27018: "mongodb",
-}
 _PROC_RE = re.compile(r'\("([^"]+)"')
 
 
 def _is_loopback(addr: str) -> bool:
     a = addr.strip("[]")
     return a == "::1" or a.startswith("127.")
-
-
-def classify(port: int) -> Optional[Tuple[str, str, str]]:
-    """Return (category, severity, label) for a risky port, else None."""
-    if port in _PLAINTEXT:
-        return ("plaintext", "important", _PLAINTEXT[port])
-    if 5900 <= port <= 5906:
-        return ("plaintext", "important", "vnc")
-    if 6000 <= port <= 6010:
-        return ("plaintext", "important", "x11")
-    if port in _SENSITIVE:
-        return ("sensitive", "important", _SENSITIVE[port])
-    return None
 
 
 def parse_ss(text: str) -> List[Dict[str, object]]:

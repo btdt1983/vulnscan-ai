@@ -559,11 +559,34 @@ def _b_compliance(cfg) -> Optional[List[str]]:
     return argv
 
 
+def _b_network(cfg) -> Optional[List[str]]:
+    targets = list(getattr(cfg, "network_targets", None) or [])
+    if not targets:
+        _eprint(
+            "\n  network_targets is empty in your config -- this scanner stays\n"
+            "  disabled until you set it (hosts/CIDRs you are explicitly\n"
+            "  authorized to test) in ~/.config/vulnscan-ai/config.json or\n"
+            "  /etc/vulnscan-ai/config.json, e.g.:\n"
+            '    "network_targets": ["10.0.0.0/24", "scanhost.example.com"]\n')
+        return None
+    preview = ", ".join(targets[:5]) + (", ..." if len(targets) > 5 else "")
+    if not _ask_yesno(
+            f"Scan {len(targets)} configured target(s) ({preview}) with nmap? "
+            f"Only proceed if you are authorized to test these hosts.", True):
+        return None
+    argv = ["scan", "--scanner", "network"]
+    pdf = _ask("Also write a PDF report to (blank = skip)", "")
+    if pdf:
+        argv += ["--pdf", pdf]
+    return argv
+
+
 # Top-level menu entries: (label, key). ``info``/``providers``/``setup`` take no
 # options, so they build a trivial argv inline.
 _TOP: List[Tuple[str, str]] = [
     ("Scan for vulnerabilities", "scan"),
     ("Compliance benchmark (CIS / STIG / PCI-DSS)", "compliance"),
+    ("Network scan (remote nmap exposure check)", "network"),
     ("Fix findings (AI-assisted, approval-gated)", "fix"),
     ("Roll back an applied fix", "rollback"),
     ("Audit log (applied fixes & rollbacks)", "audit"),
@@ -580,6 +603,7 @@ _TOP: List[Tuple[str, str]] = [
 _BUILDERS = {
     "scan": _b_scan,
     "compliance": _b_compliance,
+    "network": _b_network,
     "fix": _b_fix,
     "rollback": _b_rollback,
     "audit": _b_audit,

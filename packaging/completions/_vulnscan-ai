@@ -20,7 +20,7 @@ _vulnscan-ai() {
     'news:show recent vulnerability advisories (CISA KEV, NVD, errata)'
   )
   sev=(low moderate important critical)
-  scanners=(dnf oscap ssh systemd ports webroot container effective fips)
+  scanners=(dnf oscap ssh systemd ports webroot container effective fips network)
   providers=(claude openai gemini kimi deepseek mistral local)
 
   _arguments -C \

@@ -46,6 +46,14 @@ class Config:
     oval_auto_update: bool = True            # auto-refresh a stale OVAL feed on scan
     oval_max_age_days: int = 7               # OVAL considered stale past this age
     fips_required: bool = False              # treat a non-FIPS host as a finding (fips scanner)
+    # Remote network-exposure scanning (network scanner): an explicit allow-list
+    # of hosts/CIDRs (IPv4/hostnames; no IPv6 in v1) the operator is authorized
+    # to nmap-scan. Empty by default -- the scanner stays genuinely unavailable
+    # (not just "0 findings") until this is set, since unlike every other
+    # scanner it can affect machines other than the one being run on. Config-
+    # only by design: no CLI flag and no env-var override (matches fips_required).
+    network_targets: List[str] = field(default_factory=list)
+    network_scan_timeout: int = 900          # seconds; overall nmap invocation cap
     # Compliance benchmark scanning (scan --compliance <profile>).
     compliance_profile: str = "cis-l1"       # default XCCDF profile (alias or id)
     compliance_datastream: Optional[str] = None  # SCAP datastream path; None = auto-detect

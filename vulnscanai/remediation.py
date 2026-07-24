@@ -62,6 +62,11 @@ to localhost in its own config (transactional: backup the config, validate, \
 reload), otherwise restrict the port with the firewall (`firewall-cmd`), \
 otherwise stop+disable the service if it is unused. Never block the SSH port you \
 are connected through.
+- If the brief includes a "Target host (REMOTE ...)" line, the finding describes \
+a machine this tool did NOT run on and cannot execute anything on. Set "commands", \
+"write_files", "backup_paths" to [] and "service"/"validate_cmd" to null, \
+"restart_mode" to "none". Put the actual fix as human-readable steps in \
+"config_changes", phrased for the operator to run ON THAT REMOTE HOST themselves.
 - The user message may include a "Reference (optional, from the host's SCAP \
 Security Guide hardening benchmark...)" block: a peer-reviewed script for a \
 LEXICALLY SIMILAR rule, not necessarily an exact match for this finding. Use it \
@@ -251,6 +256,11 @@ def _finding_brief(f: Finding) -> str:
     lines = [
         f"Source scanner: {f.source}",
         f"Title: {f.title}",
+    ]
+    if f.target:
+        lines.append(
+            f"Target host (REMOTE — you cannot execute anything there): {f.target}")
+    lines += [
         f"Severity: {f.severity}",
         f"CVEs: {', '.join(f.cve_ids) or 'n/a'}",
         f"Advisory: {f.advisory or 'n/a'}",
@@ -431,6 +441,11 @@ def propose(provider: AIProvider, finding: Finding, *,
     if finding.source not in _CONFIG_SOURCES:
         backup_paths, validate_cmd, service, restart_mode = [], None, None, "none"
         write_files = []
+
+    if finding.target:
+        # A remote-host finding: never let the local engine execute anything
+        # against it, regardless of what the model returned.
+        commands = []
 
     rem = Remediation(
         summary=_scrub(data.get("summary")) or "",
@@ -622,6 +637,12 @@ def apply(finding: Finding, dry_run: bool = False,
     """
     rem = finding.remediation
     if rem is None:
+        return False
+    if finding.target:
+        # Defense in depth: this engine only ever runs commands on ITS OWN
+        # host; a target-bearing finding's fix must be applied manually there.
+        # Covers a stale/hand-edited saved plan from before this guard existed.
+        rem.applied = False
         return False
     rem.apply_results = []
     rem.rolled_back = False

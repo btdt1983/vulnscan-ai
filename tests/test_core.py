@@ -37,6 +37,7 @@ from vulnscanai.scanners.systemd_security import (
 from vulnscanai.scanners.ports import (
     audit_ports, classify, matchers_to_predicate, parse_nft_ruleset, parse_ss,
 )
+from vulnscanai.net_classify import flagged_port_spec
 
 
 def _finding(**kw):
@@ -75,6 +76,33 @@ class TestModels(unittest.TestCase):
         self.assertEqual(len(back), 1)
         self.assertEqual(back[0].id, f.id)
         self.assertEqual(back[0].remediation.commands, ["dnf update -y bash"])
+
+    def test_target_defaults_to_none_and_does_not_change_legacy_id(self):
+        # Every existing (local) scanner never sets `target`, so its .id must
+        # stay byte-identical to before the field existed.
+        a = _finding()
+        b = _finding()
+        self.assertIsNone(a.target)
+        self.assertEqual(a.id, b.id)
+
+    def test_target_changes_id_when_set(self):
+        no_target = _finding(source="network", cve_ids=[], package=None,
+                             title="ftp exposed on 10.0.0.5:21/tcp")
+        host_a = _finding(source="network", cve_ids=[], package=None,
+                         title="ftp exposed on 10.0.0.5:21/tcp", target="10.0.0.5")
+        host_b = _finding(source="network", cve_ids=[], package=None,
+                         title="ftp exposed on 10.0.0.5:21/tcp", target="10.0.0.6")
+        self.assertNotEqual(host_a.id, no_target.id)
+        self.assertNotEqual(host_a.id, host_b.id)
+
+    def test_merge_findings_keeps_different_targets_separate(self):
+        host_a = _finding(source="network", cve_ids=[], package=None,
+                         title="ftp exposed", target="10.0.0.5")
+        host_b = _finding(source="network", cve_ids=[], package=None,
+                         title="ftp exposed", target="10.0.0.6")
+        merged = merge_findings([host_a, host_b])
+        self.assertEqual(len(merged), 2)
+        self.assertEqual({f.target for f in merged}, {"10.0.0.5", "10.0.0.6"})
 
 
 class TestNevraAndRegex(unittest.TestCase):
@@ -209,6 +237,17 @@ class TestTransactionalApply(unittest.TestCase):
             self.assertFalse(ok)
             self.assertEqual(f.remediation.apply_results[0]["status"], "blocked")
             self.assertEqual(open(target).read().strip(), "ORIGINAL")
+
+    def test_apply_refuses_target_finding(self):
+        # Defence in depth against a stale/hand-edited findings.json from
+        # before this guard existed: a target-bearing finding must never be
+        # applied, even if it carries a fully-formed (simulated) plan.
+        f = _finding(source="network", package=None, cve_ids=[],
+                    title="ftp exposed", target="10.0.0.5")
+        f.remediation = Remediation(commands=["echo pwned"])
+        ok = apply(f, dry_run=False)
+        self.assertFalse(ok)
+        self.assertFalse(f.remediation.applied)
 
     def test_manual_restore_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -535,6 +574,13 @@ class TestPortScanner(unittest.TestCase):
             allowed=lambda proto, port: False if port == 3306 else None)
         services = {f.raw["service"] for f in findings}
         self.assertEqual(services, {"telnet"})
+
+    def test_flagged_port_spec(self):
+        # Shared with the network scanner: the -p spec must cover every port
+        # classify() can flag, derived from the same net_classify tables.
+        spec = flagged_port_spec()
+        for token in ("21", "23", "3306", "5900-5906", "6000-6010"):
+            self.assertIn(token, spec.split(","))
 
 
 class TestNftablesFirewall(unittest.TestCase):
@@ -1740,6 +1786,18 @@ class TestRemediationSanitize(unittest.TestCase):
         self.assertIsNone(rem.service)
         self.assertEqual(rem.restart_mode, "none")
         self.assertEqual(rem.commands, ["dnf update -y python3-urllib3"])
+
+    def test_target_finding_never_gets_commands(self):
+        # A remote-host (network) finding: even if the model ignores the
+        # instruction and returns commands, they must be stripped -- this
+        # engine only ever executes on its OWN host, never the flagged one.
+        rem = self._propose(
+            '{"summary":"disable telnet","commands":["systemctl stop telnet"],'
+            '"write_files":[{"path":"/etc/xinetd.d/telnet","content":"disable=yes"}]}',
+            source="network", package=None, cve_ids=[], title="telnet exposed",
+            target="10.0.0.5")
+        self.assertEqual(rem.commands, [])
+        self.assertEqual(rem.write_files, [])
 
     def test_write_files_parsed_for_config_finding(self):
         rem = self._propose(
@@ -3700,6 +3758,168 @@ class TestFipsPosture(unittest.TestCase):
                                    required=required)):
             f = fp.FipsPostureScanner(_Cfg()).scan()
         self.assertEqual(self._cats(f), {"required-off"})
+
+
+class TestNetworkScanner(unittest.TestCase):
+    """The remote nmap network-exposure scanner: all parse/audit logic is
+    unit-testable without nmap or any real target on the host."""
+
+    def _net(self):
+        import vulnscanai.scanners.network as network
+        return network
+
+    # Matches real `nmap -oX -` output shape (verified live against nmap 7.92
+    # on this host, incl. the `<!DOCTYPE nmaprun>` every real scan emits and
+    # the <extraports> summary block for the closed/filtered bulk).
+    NMAP_XML = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE nmaprun>\n'
+        '<nmaprun scanner="nmap" version="7.92">\n'
+        '  <host>\n'
+        '    <status state="up" reason="syn-ack"/>\n'
+        '    <address addr="10.0.0.5" addrtype="ipv4"/>\n'
+        '    <hostnames><hostname name="foo.local" type="PTR"/></hostnames>\n'
+        '    <ports>\n'
+        '      <extraports state="closed" count="1">\n'
+        '        <extrareasons reason="reset" count="1" proto="tcp" ports="80"/>\n'
+        '      </extraports>\n'
+        '      <port protocol="tcp" portid="21">\n'
+        '        <state state="open" reason="syn-ack"/>\n'
+        '        <service name="ftp" product="vsftpd" version="3.0.3"/>\n'
+        '      </port>\n'
+        '      <port protocol="tcp" portid="80">\n'
+        '        <state state="closed" reason="conn-refused"/>\n'
+        '      </port>\n'
+        '    </ports>\n'
+        '  </host>\n'
+        '  <host>\n'
+        '    <status state="down" reason="no-response"/>\n'
+        '    <address addr="10.0.0.6" addrtype="ipv4"/>\n'
+        '  </host>\n'
+        '</nmaprun>\n'
+    )
+
+    def test_registered_in_scanners(self):
+        from vulnscanai.scanners import SCANNERS
+        self.assertIn("network", SCANNERS)
+
+    def test_valid_targets(self):
+        net = self._net()
+        good = net._valid_targets([
+            "10.0.0.5", "10.0.0.0/24", "host.example.com", " 10.0.0.9 ",
+        ])
+        self.assertEqual(good, ["10.0.0.5", "10.0.0.0/24", "host.example.com",
+                                "10.0.0.9"])
+        bad = net._valid_targets(["", "   ", "-oX", "10.0.0.5:22", "fe80::1",
+                                  "evil;rm -rf", "$(whoami)"])
+        self.assertEqual(bad, [])
+
+    def test_parse_nmap_xml_basic(self):
+        net = self._net()
+        hosts = net.parse_nmap_xml(self.NMAP_XML)
+        up = next(h for h in hosts if h.address == "10.0.0.5")
+        self.assertEqual(up.state, "up")
+        self.assertEqual(up.hostnames, ["foo.local"])
+        # Only the open port (21) survives; the closed one (80) is dropped.
+        self.assertEqual(len(up.ports), 1)
+        p = up.ports[0]
+        self.assertEqual((p.proto, p.port, p.service_name, p.product, p.version),
+                         ("tcp", 21, "ftp", "vsftpd", "3.0.3"))
+
+    def test_parse_nmap_xml_host_down(self):
+        net = self._net()
+        hosts = net.parse_nmap_xml(self.NMAP_XML)
+        down = next(h for h in hosts if h.address == "10.0.0.6")
+        self.assertEqual(down.state, "down")
+        self.assertEqual(down.ports, [])
+
+    def test_parse_nmap_xml_malformed(self):
+        net = self._net()
+        self.assertEqual(net.parse_nmap_xml(""), [])
+        self.assertEqual(net.parse_nmap_xml("not xml at all <<<"), [])
+        self.assertEqual(net.parse_nmap_xml(
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+            '<nmaprun><host><address addr="&xxe;" addrtype="ipv4"/></host></nmaprun>'
+        ), [])
+
+    def test_parse_nmap_xml_real_doctype_not_rejected(self):
+        # Regression: real `nmap -oX -` output always carries a bare
+        # `<!DOCTYPE nmaprun>` (verified live against nmap 7.92) -- an
+        # earlier version of this parser rejected ANY `<!DOCTYPE`, which
+        # silently zeroed out every real scan's findings. Only a DOCTYPE
+        # smuggling an `<!ENTITY` (the actual XXE primitive) may be rejected.
+        net = self._net()
+        real_shaped = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE nmaprun>\n'
+            '<nmaprun scanner="nmap" version="7.92">\n'
+            '<host><status state="up" reason="localhost-response"/>\n'
+            '<address addr="127.0.0.1" addrtype="ipv4"/>\n'
+            '<hostnames></hostnames>\n'
+            '<ports><port protocol="tcp" portid="6010">'
+            '<state state="open" reason="syn-ack"/>'
+            '<service name="x11" method="table" conf="3"/></port></ports>'
+            '</host></nmaprun>\n'
+        )
+        hosts = net.parse_nmap_xml(real_shaped)
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual(hosts[0].address, "127.0.0.1")
+        self.assertEqual(hosts[0].ports[0].port, 6010)
+
+    def test_audit_network_flags_plaintext_and_sensitive(self):
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=21, service_name="ftp",
+                        product="vsftpd", version="3.0.3"),
+            net.NmapPort(proto="tcp", port=3306, service_name="mysql"),
+            net.NmapPort(proto="tcp", port=80, service_name="http"),
+        ])
+        findings = net.audit_network([host])
+        cats = {f.raw["category"] for f in findings}
+        self.assertEqual(cats, {"plaintext", "sensitive"})
+        for f in findings:
+            self.assertEqual(f.source, "network")
+            self.assertEqual(f.target, "10.0.0.5")
+
+    def test_audit_network_skips_down_hosts(self):
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="down",
+                            ports=[net.NmapPort(proto="tcp", port=21)])
+        self.assertEqual(net.audit_network([host]), [])
+
+    def test_audit_network_dedups_same_host_port_category(self):
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=21),
+            net.NmapPort(proto="udp", port=21),
+        ])
+        findings = net.audit_network([host])
+        self.assertEqual(len(findings), 1)
+
+    def test_available_requires_nmap_and_targets(self):
+        from unittest import mock
+        net = self._net()
+
+        class _Cfg:
+            network_targets = ["10.0.0.5"]
+
+        class _CfgEmpty:
+            network_targets = []
+
+        with mock.patch.object(net, "have", return_value=True):
+            self.assertTrue(net.NetworkScanner(_Cfg()).available())
+            self.assertFalse(net.NetworkScanner(_CfgEmpty()).available())
+        with mock.patch.object(net, "have", return_value=False):
+            self.assertFalse(net.NetworkScanner(_Cfg()).available())
+            self.assertFalse(net.NetworkScanner(_CfgEmpty()).available())
+
+    def test_scan_returns_empty_without_targets(self):
+        net = self._net()
+
+        class _Cfg:
+            network_targets = []
+
+        self.assertEqual(net.NetworkScanner(_Cfg()).scan(), [])
 
 
 class TestAuditRegressions(unittest.TestCase):

@@ -333,6 +333,8 @@ def _finding_html(f: Finding, allow_fix: bool = False) -> str:
         meta.append("CVEs: " + links)
     if f.source:
         meta.append(f"source: {html.escape(f.source)}")
+    if f.target:
+        meta.append(f"target: {html.escape(f.target)}")
     if meta:
         parts.append('<div class="meta">' + " &middot; ".join(meta) + "</div>")
     flags = []

@@ -105,6 +105,8 @@ def build_blocks(findings: List[Finding], hostname: str, generated: str) -> List
         )
         if f.vendor_fix_state and f.vendor_fix_state.lower() != "affected":
             meta += f"  |  Vendor: {f.vendor_fix_state}"
+        if f.target:
+            meta += f"  |  Target host: {f.target}"
         blocks.append({"t": "meta", "text": meta})
         if f.description:
             blocks.append({"t": "para", "text": f.description[:1200]})

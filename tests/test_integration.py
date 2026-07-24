@@ -126,5 +126,26 @@ class TestScannersEndToEnd(unittest.TestCase):
         self._run_scanner("systemd")
 
 
+@unittest.skipUnless(_INTEGRATION, _reason)
+class TestNetworkScannerLive(unittest.TestCase):
+    """The network scanner is deliberately NOT in TestScannersEndToEnd's
+    generic loop: it only becomes available with an explicit network_targets
+    allow-list, so a dedicated test with an always-authorized target
+    (127.0.0.1, never a real external host) is the honest way to exercise it
+    even in integration mode."""
+
+    @unittest.skipUnless(shutil.which("nmap"), "nmap not installed")
+    def test_network_scanner_against_localhost(self):
+        from vulnscanai.scanners.network import NetworkScanner
+        cfg = Config(network_targets=["127.0.0.1"])
+        scanner = NetworkScanner(cfg)
+        self.assertTrue(scanner.available())
+        findings = scanner.scan()                       # must not crash
+        self.assertIsInstance(findings, list)
+        for f in findings:
+            self.assertEqual(f.source, "network")
+            self.assertTrue(f.target)
+
+
 if __name__ == "__main__":
     unittest.main()

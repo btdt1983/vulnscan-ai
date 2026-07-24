@@ -117,6 +117,12 @@ class Finding:
     references: List[str] = field(default_factory=list)
     remediation: Optional[Remediation] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    # Set only by scanners that describe a host OTHER than the one running the
+    # scan (currently just `network`'s remote nmap findings): the remote
+    # IP/hostname this finding is about. None (default) for every local-host
+    # finding, which keeps their `.id` hash byte-identical to before this field
+    # existed.
+    target: Optional[str] = None
 
     @property
     def id(self) -> str:
@@ -132,6 +138,11 @@ class Finding:
         # findings always have one of the above, so their ids stay unchanged.
         if not (self.advisory or self.cve_ids or self.package):
             parts.append(self.title)
+        # A remote-host finding needs the target in its id, else two different
+        # hosts exposing the same risky port would collapse into one finding
+        # under merge_findings/dedup_cross_scanner (both key off .id).
+        if self.target:
+            parts.append(self.target)
         basis = "|".join(parts)
         digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
         return digest
@@ -356,9 +367,10 @@ def dedup_cross_scanner(findings: List[Finding]) -> List[Finding]:
 
 def match_ignore(finding: Finding, patterns: List[str]) -> bool:
     """True if any baseline pattern matches the finding (id, CVE, advisory,
-    package, or title — globs allowed). Blank/`#` lines are ignored."""
+    package, title, or target host — globs allowed). Blank/`#` lines are
+    ignored."""
     fields = [finding.id, finding.advisory or "", finding.package or "",
-              finding.title or "", *finding.cve_ids]
+              finding.title or "", finding.target or "", *finding.cve_ids]
     for pat in patterns:
         pat = pat.strip()
         if not pat or pat.startswith("#"):

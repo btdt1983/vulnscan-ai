@@ -124,6 +124,7 @@ def build_sarif(findings: List[Finding]) -> Dict:
                 "fixedVersion": f.fixed_version,
                 "cvss": f.cvss_score,
                 "scanner": f.source,
+                "target": f.target,
             },
         }
         if f.remediation and f.remediation.commands:

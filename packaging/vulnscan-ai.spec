@@ -39,6 +39,10 @@ Recommends:     scap-security-guide
 # effective-state scanner uses; it degrades to stdlib /proc + kernel checks
 # without it.
 Recommends:     dnf-utils
+# The network-exposure scanner (`network`) is opt-in: it stays unavailable
+# until the operator sets an explicit `network_targets` allow-list in the
+# config, and even then it needs nmap to run remote host/port/service scans.
+Recommends:     nmap
 # Pulls in /usr/lib/sysusers.d handling on EL9.
 %{?sysusers_requires_compat}
 

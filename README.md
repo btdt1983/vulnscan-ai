@@ -27,7 +27,7 @@ queries vulnerability websites (Red Hat Security Data API, NIST NVD).
 | Decision | Choice |
 |---|---|
 | Language | Python 3 (ships on RHEL; no mandatory 3rd-party deps) |
-| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container`. Runtime posture: `effective` (reboot/restart still pending). Crypto posture: `fips` (FIPS-mode & crypto-policy gaps) |
+| Scanners | CVE: `dnf`/RHSA, OpenSCAP/OVAL, NVD/Red Hat feeds. Hardening/exposure: `ssh`, `systemd`, `ports`, `webroot`, `container`. Runtime posture: `effective` (reboot/restart still pending). Crypto posture: `fips` (FIPS-mode & crypto-policy gaps). Remote exposure: `network` (nmap against an authorized target allow-list) |
 | Prioritisation | **CISA KEV** (actively exploited) + **EPSS** exploit-probability on every finding |
 | Compliance | **CIS / STIG / PCI-DSS / HIPAA** benchmarks via OpenSCAP XCCDF (`scan --compliance`): score + failing rules + dashboard tab |
 | Advisories | `news` command + dashboard tab: CISA KEV, NVD, distro errata (cached, offline-friendly) |
@@ -242,6 +242,10 @@ vulnscan-ai scan --scanner container
 # Audit the FIPS / crypto-policy posture (half-enabled FIPS, LEGACY policy, ...)
 vulnscan-ai scan --scanner fips
 
+# Audit remote hosts you are authorized to test (config-only allow-list —
+# set "network_targets" first; see the `network` scanner below)
+vulnscan-ai scan --scanner network
+
 # Run every available scanner at once
 vulnscan-ai scan --all
 
@@ -322,6 +326,19 @@ The scanners are built to avoid noise:
   `"fips_required": true` to treat a non-FIPS host as a finding. Pure stdlib
   (reads `/proc` + the crypto-policies state files). Run it with `--scanner fips`
   or `--all`.
+- **`network`** is the only scanner that inspects machines *other than* the one
+  it runs on, so it stays genuinely unavailable — not just quiet — until you
+  explicitly set `"network_targets": ["10.0.0.0/24", "host.example.com"]` (hosts/
+  CIDRs you are **authorized to test**; config-only, no CLI flag). It shells out
+  to `nmap -sV` for host discovery, a scoped port scan and service/version
+  detection, then flags the same plaintext/legacy-protocol and sensitive-service
+  exposures as `ports` — the same risk model, observed remotely instead of via
+  local `ss`. V1 does **not** attempt CVE/version matching (parked; too high a
+  false-positive risk without more validation). Findings carry the remote
+  host in `target` and are detection-only: fixes must be applied on the flagged
+  host itself, so `fix` never proposes or executes commands for them. Optional
+  dependency (`Recommends: nmap`); run it with `--scanner network` or `--all`
+  (a no-op without configured targets).
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

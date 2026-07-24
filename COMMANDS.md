@@ -105,7 +105,7 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 | Option | Description |
 |---|---|
-| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch), `fips` (FIPS-mode & crypto-policy posture). Default: from config (`dnf`). |
+| `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch), `fips` (FIPS-mode & crypto-policy posture), `network` (remote nmap exposure check against an authorized target allow-list). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
@@ -172,6 +172,22 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > non-FIPS host as an `important` finding (for hosts that must be FIPS 140). Pure
 > stdlib; fixes are guided (`fips-mode-setup --enable` + reboot, or
 > `update-crypto-policies --set …`), not auto-applied.
+
+> **`network` scanner.** The only scanner that inspects machines *other than*
+> the one it runs on, so it stays genuinely unavailable — not just quiet —
+> until you explicitly set `"network_targets": ["10.0.0.0/24",
+> "host.example.com"]` in the config (hosts/CIDRs you are **authorized to
+> test**; config-only, no CLI flag or env override). It shells out to
+> `nmap -sV` for host discovery, a scoped port scan and service/version
+> detection, then flags the same plaintext/legacy-protocol and
+> sensitive-service exposures as `ports` — the same risk model, observed
+> remotely instead of via local `ss`. V1 does **not** attempt CVE/version
+> matching on detected services (parked; too high a false-positive risk
+> without more validation). Findings carry the remote host in `target` and
+> are detection-only: since a fix must run on the flagged host, not this one,
+> `fix` never proposes or executes commands for them — only human-readable
+> steps. Optional dependency (`Recommends: nmap`); run it with `--scanner
+> network` or `--all` (a no-op without configured targets).
 
 > **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
 > CVE is checked against the **CISA KEV** catalog (actively exploited in the
