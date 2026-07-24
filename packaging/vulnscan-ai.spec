@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.7
+Version:        0.4.8
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,24 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jul 24 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.8-1
+- Network exposure scanner (`network`, 10th scanner): the first scanner that
+  inspects hosts OTHER than the one it runs on. Shells out to `nmap -sV` for
+  host discovery, a scoped port scan and service/version detection, then flags
+  the same plaintext/legacy-protocol and sensitive-service exposures as the
+  `ports` scanner (shared risk taxonomy, extracted into new net_classify.py) —
+  the same risk model, observed remotely instead of via local `ss`. No CVE/CPE
+  matching on detected service versions yet (parked). Safety: gated on an
+  explicit, config-only `network_targets` allow-list (hosts/CIDRs the operator
+  is authorized to test) -- never a CLI flag -- and stays genuinely unavailable
+  until configured, printing an authorization reminder on every real
+  invocation. New `Finding.target` field (None for every existing scanner, so
+  finding-id hashing is unaffected) lets a finding describe a remote host
+  without corrupting cross-scanner dedup. `remediation.py` hard-refuses to
+  execute anything against a target-bearing finding (fixes for a remote host
+  cannot run on this one) -- `propose()` strips any AI-returned commands and
+  `apply()` unconditionally refuses, independent of the AI. New "Network scan"
+  menu entry. Optional `Recommends: nmap`. 323 tests, bandit clean.
 * Sun Jul 19 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.7-1
 - Correctness & security hardening from a two-agent adversarial code review.
   Truthfulness: an auto-rollback whose file restore OR service revert failed no
