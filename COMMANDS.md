@@ -187,7 +187,12 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > are detection-only: since a fix must run on the flagged host, not this one,
 > `fix` never proposes or executes commands for them — only human-readable
 > steps. Optional dependency (`Recommends: nmap`); run it with `--scanner
-> network` or `--all` (a no-op without configured targets).
+> network` or `--all` (a no-op without configured targets). `Recommends:`
+> only auto-installs nmap on a fresh `dnf install` — an *upgrade* of an
+> already-installed vulnscan-ai does not retroactively pull in a newly added
+> weak dependency. `vulnscan-ai info` flags this: if nmap is missing it
+> offers to install it now via `dnf` (interactively, TTY only) or prints the
+> command to run yourself.
 
 > **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
 > CVE is checked against the **CISA KEV** catalog (actively exploited in the

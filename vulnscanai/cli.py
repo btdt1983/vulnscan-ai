@@ -10,6 +10,7 @@ import glob
 import os
 import re
 import socket
+import subprocess  # nosec B404 -- only used to offer an explicit, confirmed `dnf install nmap`
 import sys
 from typing import Dict, List, Optional
 
@@ -30,6 +31,7 @@ from .scanners import (
     PatchedStateEnricher, ServiceStateEnricher, detect_distro, download_oval,
     is_oval_stale, oval_age_days,
 )
+from .scanners.base import have
 
 
 # --------------------------------------------------------------------------- #
@@ -292,6 +294,36 @@ def _print_diff(added: List[Finding], resolved: List[Finding]) -> None:
         print(f"  - ... and {len(resolved) - 10} more resolved")
 
 
+def _network_hint(scanner) -> None:
+    """`info`'s sub-hint for the `network` scanner: explain why it's
+    unavailable, and offer to install nmap now (interactively, via dnf) when
+    that's the only missing piece."""
+    targets = scanner._targets()
+    nmap_present = have("nmap")
+    if not targets:
+        print('             set "network_targets": ["10.0.0.0/24", "host.example.com"] '
+              "in the config (hosts/CIDRs you are authorized to test)")
+    if nmap_present:
+        return
+    print("             nmap is not installed (optional; Recommends: nmap)")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print("             install with:  dnf install -y nmap")
+        return
+    try:
+        ans = input("             Install nmap now via dnf? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if ans not in ("y", "yes"):
+        print("             skipped. Install later with:  dnf install -y nmap")
+        return
+    rc = subprocess.run(["dnf", "install", "-y", "nmap"], check=False).returncode
+    if rc == 0 and have("nmap"):
+        print("             nmap installed.")
+    else:
+        print("             install failed; run manually:  dnf install -y nmap")
+
+
 # --------------------------------------------------------------------------- #
 # command handlers
 # --------------------------------------------------------------------------- #
@@ -309,8 +341,11 @@ def cmd_info(cfg: Config, args) -> int:
         print("GPU: none detected — local models run on CPU")
     print("\nScanners:")
     for name, cls in SCANNERS.items():
-        avail = "available" if cls(cfg).available() else "unavailable"
+        scanner = cls(cfg)
+        avail = "available" if scanner.available() else "unavailable"
         print(f"  {name:<8} {avail}")
+        if name == "network" and not scanner.available():
+            _network_hint(scanner)
     comp = ComplianceScanner(cfg)
     if comp.available():
         ds = os.path.basename(comp.datastream)

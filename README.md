@@ -338,7 +338,12 @@ The scanners are built to avoid noise:
   host in `target` and are detection-only: fixes must be applied on the flagged
   host itself, so `fix` never proposes or executes commands for them. Optional
   dependency (`Recommends: nmap`); run it with `--scanner network` or `--all`
-  (a no-op without configured targets).
+  (a no-op without configured targets). Note `Recommends:` only auto-installs
+  nmap on a fresh `dnf install` — an *upgrade* of an already-installed
+  vulnscan-ai does not retroactively pull in a newly added weak dependency.
+  `vulnscan-ai info` flags this: if nmap is missing it offers to install it
+  now via `dnf` (interactively, TTY only) or prints the command to run
+  yourself.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

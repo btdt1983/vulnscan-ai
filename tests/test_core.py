@@ -1246,6 +1246,74 @@ class TestSelectScanners(unittest.TestCase):
                          ["dnf"])
 
 
+class TestNetworkInfoHint(unittest.TestCase):
+    """`info`'s sub-hint for the `network` scanner: explains WHY it's
+    unavailable (no targets vs. no nmap) and offers to install nmap via dnf
+    when running interactively."""
+
+    def _scanner(self, targets):
+        from vulnscanai.scanners.network import NetworkScanner
+        return NetworkScanner(Config(network_targets=targets))
+
+    def _run_hint(self, scanner, *, nmap_present, interactive, answer="",
+                 install_rc=0):
+        from unittest import mock
+        import vulnscanai.cli as cli
+        out = io.StringIO()
+        out.isatty = lambda: interactive          # set BEFORE swapping in sys.stdout
+        with mock.patch.object(cli, "have", return_value=nmap_present), \
+             mock.patch("sys.stdin.isatty", return_value=interactive), \
+             mock.patch("builtins.input", return_value=answer) as m_input, \
+             mock.patch.object(cli.subprocess, "run") as m_run, \
+             mock.patch("sys.stdout", out):
+            m_run.return_value = mock.Mock(returncode=install_rc)
+            cli._network_hint(scanner)
+        return out.getvalue(), m_input, m_run
+
+    def test_no_targets_hint_shown(self):
+        out, m_input, m_run = self._run_hint(
+            self._scanner([]), nmap_present=True, interactive=True)
+        self.assertIn("network_targets", out)
+        self.assertNotIn("nmap", out)
+        m_input.assert_not_called()
+        m_run.assert_not_called()
+
+    def test_nmap_missing_noninteractive_prints_manual_command(self):
+        out, m_input, m_run = self._run_hint(
+            self._scanner(["10.0.0.5"]), nmap_present=False, interactive=False)
+        self.assertIn("dnf install -y nmap", out)
+        m_input.assert_not_called()
+        m_run.assert_not_called()
+
+    def test_nmap_missing_interactive_declined(self):
+        out, m_input, m_run = self._run_hint(
+            self._scanner(["10.0.0.5"]), nmap_present=False, interactive=True,
+            answer="n")
+        self.assertIn("skipped", out)
+        m_run.assert_not_called()
+
+    def test_nmap_missing_interactive_accepted_installs(self):
+        out, m_input, m_run = self._run_hint(
+            self._scanner(["10.0.0.5"]), nmap_present=False, interactive=True,
+            answer="y", install_rc=0)
+        m_run.assert_called_once_with(["dnf", "install", "-y", "nmap"], check=False)
+
+    def test_nmap_install_failure_reported(self):
+        from unittest import mock
+        import vulnscanai.cli as cli
+        out = io.StringIO()
+        out.isatty = lambda: True
+        # nmap absent both before AND after the (failed) install attempt.
+        with mock.patch.object(cli, "have", return_value=False), \
+             mock.patch("sys.stdin.isatty", return_value=True), \
+             mock.patch("builtins.input", return_value="y"), \
+             mock.patch.object(cli.subprocess, "run",
+                               return_value=mock.Mock(returncode=1)), \
+             mock.patch("sys.stdout", out):
+            cli._network_hint(self._scanner(["10.0.0.5"]))
+        self.assertIn("install failed", out.getvalue())
+
+
 class TestDashboard(unittest.TestCase):
     def test_password_hash_roundtrip(self):
         h = dashboard.hash_password("s3cret!")
