@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.8
+Version:        0.4.9
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jul 24 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.9-1
+- `info` now explains why the `network` scanner is unavailable (missing
+  `network_targets` config, missing nmap, or both) instead of just showing
+  "unavailable". `Recommends:` weak dependencies only auto-install on a
+  fresh `dnf install`, not on an upgrade of an already-installed package, so
+  a host upgrading from an earlier release does not get nmap for free; when
+  nmap is the only thing missing, `info` now offers to install it right
+  there via `dnf install -y nmap` (interactively, TTY only) or prints the
+  command to run manually otherwise. 328 tests, bandit clean.
 * Fri Jul 24 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.8-1
 - Network exposure scanner (`network`, 10th scanner): the first scanner that
   inspects hosts OTHER than the one it runs on. Shells out to `nmap -sV` for
