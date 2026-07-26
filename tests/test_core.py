@@ -2412,7 +2412,8 @@ class TestMenu(unittest.TestCase):
         self.menu = menu
         # Snapshot the interactive helpers so each test can stub them safely.
         self._orig = {n: getattr(menu, n) for n in
-                      ("_choose", "_multi_choose", "_ask", "_ask_yesno")}
+                      ("_choose", "_multi_choose", "_ask", "_ask_yesno", "_pause")}
+        self._pauses = []
 
     def tearDown(self):
         for n, fn in self._orig.items():
@@ -2425,6 +2426,7 @@ class TestMenu(unittest.TestCase):
         self.menu._multi_choose = lambda *a, **k: mq.pop(0)
         self.menu._ask = lambda *a, **k: aq.pop(0)
         self.menu._ask_yesno = lambda *a, **k: yq.pop(0)
+        self.menu._pause = lambda *a, **k: self._pauses.append(True)
 
     def _parses(self, argv):
         """Assert the built argv is accepted by the real CLI parser."""
@@ -2534,6 +2536,35 @@ class TestMenu(unittest.TestCase):
         self.assertEqual(argv, ["scheduled", "--plan",
                                 "--fail-on", "important"])
         self._parses(argv)
+
+    def test_network_no_targets_pauses_so_hint_is_readable(self):
+        # Regression: without a pause, the "set network_targets" hint printed
+        # right before returning to the (curses) menu got wiped by the next
+        # redraw before the operator could read it -- looked like option 3
+        # "did nothing".
+        self._stub()
+        cfg = Config()
+        cfg.network_targets = []
+        self.assertIsNone(self.menu._b_network(cfg))
+        self.assertEqual(self._pauses, [True])
+
+    def test_network_confirmed_argv(self):
+        self._stub(yesno=[True], ask=["/tmp/net.pdf"])
+        cfg = Config()
+        cfg.network_targets = ["10.0.0.5"]
+        argv = self.menu._b_network(cfg)
+        self.assertEqual(argv, ["scan", "--scanner", "network",
+                                "--pdf", "/tmp/net.pdf"])
+        self._parses(argv)
+
+    def test_network_declined_no_pause(self):
+        # Declining the authorization prompt is itself the explanation --
+        # no extra message to protect from the next redraw.
+        self._stub(yesno=[False])
+        cfg = Config()
+        cfg.network_targets = ["10.0.0.5"]
+        self.assertIsNone(self.menu._b_network(cfg))
+        self.assertEqual(self._pauses, [])
 
     def test_trivial_builders(self):
         for key, expect in (("info", ["info"]), ("providers", ["providers"]),

@@ -568,6 +568,7 @@ def _b_network(cfg) -> Optional[List[str]]:
             "  authorized to test) in ~/.config/vulnscan-ai/config.json or\n"
             "  /etc/vulnscan-ai/config.json, e.g.:\n"
             '    "network_targets": ["10.0.0.0/24", "scanhost.example.com"]\n')
+        _pause()
         return None
     preview = ", ".join(targets[:5]) + (", ..." if len(targets) > 5 else "")
     if not _ask_yesno(
