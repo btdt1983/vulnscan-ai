@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.9
+Version:        0.4.10
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,15 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sun Jul 26 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.10-1
+- Fix: the interactive menu's "Network scan" entry (option 3) silently
+  returned to the menu when `network_targets` wasn't configured yet -- it
+  printed an explanatory hint but never paused, so the next screen redraw
+  wiped it before it could be read. Now pauses so the hint stays visible.
+  Docs: the `menu` command reference was missing `compliance`, `network`
+  and `audit` from its list of covered commands; the website's command
+  table gained a dedicated row for `scan --scanner network` (it previously
+  only appeared as a scanner chip, unlike every other first-class command).
 * Fri Jul 24 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.9-1
 - `info` now explains why the `network` scanner is unavailable (missing
   `network_targets` config, missing nmap, or both) instead of just showing

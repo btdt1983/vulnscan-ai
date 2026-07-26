@@ -60,8 +60,8 @@ Wherever `--min-severity` / `--fail-on` appear, use one of:
 ## `menu`
 
 Launch an interactive, menu-driven front-end so you don't have to remember flags.
-It covers **every** command: scan, fix, rollback, report, news, info, providers,
-dashboard, scheduled, update-oval and setup.
+It covers **every** command: scan, compliance, network, fix, rollback, audit,
+report, news, info, providers, dashboard, scheduled, update-oval and setup.
 
 ```bash
 vulnscan-ai menu     # explicit
