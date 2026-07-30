@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.10
+Version:        0.4.11
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,21 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Thu Jul 30 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.11-1
+- Network scanner v2: authorize targets without hand-editing config.json
+  (`vulnscan-ai network --add/--remove/--list/--ports`, plus a setup-wizard
+  step and a menu fan-out under the existing "Network scan" entry). IPv6
+  targets (addresses/CIDRs/hostnames) are now supported -- nmap runs a
+  separate `-6` invocation for them, since it can't mix address families in
+  one scan. A risky service found on a non-standard port is now also
+  flagged, gated on a real confirmed nmap `-sV` probe match (never its
+  unconfirmed port-number guess); widen what gets probed with the new
+  `network_scan_ports` config/`--ports` flag (`known`/`top1000`/`all`/a
+  literal spec). CVE/version matching remains out of scope (too high a
+  false-positive risk). Also: the `vulnscan-ai.service` scheduled-scan unit's
+  `TimeoutStartSec` is now explicit, since the network scanner can now run
+  two nmap invocations per scan.
+
 * Sun Jul 26 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.10-1
 - Fix: the interactive menu's "Network scan" entry (option 3) silently
   returned to the menu when `network_targets` wasn't configured yet -- it
