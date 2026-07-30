@@ -301,8 +301,9 @@ def _network_hint(scanner) -> None:
     targets = scanner._targets()
     nmap_present = have("nmap")
     if not targets:
-        print('             set "network_targets": ["10.0.0.0/24", "host.example.com"] '
-              "in the config (hosts/CIDRs you are authorized to test)")
+        print("             network_targets is empty -- authorize hosts/CIDRs "
+              "you are permitted to test with:")
+        print("               vulnscan-ai network --add 10.0.0.0/24")
     if nmap_present:
         return
     print("             nmap is not installed (optional; Recommends: nmap)")
@@ -995,6 +996,42 @@ def cmd_dashboard(cfg: Config, args) -> int:
         return 1
 
 
+def cmd_network(cfg: Config, args) -> int:
+    """Manage the `network` scanner's authorized-target allow-list. This
+    subcommand only edits `network_targets`/`network_scan_ports` -- it never
+    scans (that's `scan --scanner network`, or the menu's Network-scan
+    entry)."""
+    from .scanners.network import valid_target
+    if args.add or args.remove:
+        targets = list(cfg.network_targets)
+        for t in (args.add or []):
+            t = t.strip()
+            if not valid_target(t):
+                _eprint(f"  ! invalid host/CIDR/hostname, skipping: {t}")
+            elif t not in targets:
+                targets.append(t)
+        for t in (args.remove or []):
+            t = t.strip()
+            if t in targets:
+                targets.remove(t)
+        path = cfg.write_user_config({"network_targets": targets})
+        print(f"Authorized network_targets: {targets or '(none)'}")
+        print("Only scan hosts/networks you are explicitly authorized to test.")
+        print(f"Saved to {path}")
+        return 0
+    if args.ports:
+        path = cfg.write_user_config({"network_scan_ports": args.ports})
+        print(f"network_scan_ports set to: {args.ports}")
+        print(f"Saved to {path}")
+        return 0
+    targets = list(cfg.network_targets)
+    print(f"network_targets:      {targets or '(none configured)'}")
+    print(f"network_scan_ports:   {getattr(cfg, 'network_scan_ports', 'known')}")
+    print(f"network_scan_timeout: {cfg.network_scan_timeout}s")
+    print("Run the scan itself with:  vulnscan-ai scan --scanner network")
+    return 0
+
+
 def cmd_menu(cfg: Config, args) -> int:
     """Launch the interactive, menu-driven front-end."""
     from .menu import run_menu
@@ -1219,6 +1256,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--bind",
                     help="bind address (default: 127.0.0.1; auto 0.0.0.0 with an allow-list)")
     sp.set_defaults(func=cmd_dashboard)
+
+    sp = sub.add_parser(
+        "network",
+        help="manage the network scanner's authorized-target allow-list "
+             "(does not scan)")
+    sp.add_argument("--add", action="append", metavar="HOST/CIDR",
+                    help="authorize a target you may nmap-scan (repeatable), then exit")
+    sp.add_argument("--remove", action="append", metavar="HOST/CIDR",
+                    help="remove a target (repeatable), then exit")
+    sp.add_argument("--list", action="store_true",
+                    help="show configured targets/settings, then exit")
+    sp.add_argument("--ports", metavar="SPEC",
+                    help="port-scan breadth: known (default) | top1000 | all "
+                         "| a literal nmap -p spec, then exit")
+    sp.set_defaults(func=cmd_network)
 
     sp = sub.add_parser("audit",
                         help="show the remediation audit log (applied fixes + rollbacks)")

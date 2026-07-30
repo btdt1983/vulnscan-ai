@@ -344,8 +344,46 @@ def _configure_cloud_provider(config) -> int:
     return 0
 
 
+def _configure_network_targets(config) -> None:
+    """Optional: authorize hosts/CIDRs for the `network` (remote nmap
+    exposure) scanner. Skipped by default -- most hosts never touch this."""
+    print("\n" + "-" * 64)
+    print(" Remote network scan targets (optional)")
+    print("-" * 64)
+    print("The `network` scanner nmap-probes OTHER machines for exposed")
+    print("services. It only scans hosts/CIDRs you explicitly authorize here.")
+    if not _ask_yes("Configure authorized network-scan targets now?"):
+        existing = list(getattr(config, "network_targets", None) or [])
+        if existing:
+            print(f"Keeping existing targets: {existing}")
+        else:
+            print("Skipped. Configure later with 'vulnscan-ai network --add ...'.")
+        return
+
+    from .scanners.network import valid_target
+    targets = list(getattr(config, "network_targets", None) or [])
+    print("  Enter one host/IP/CIDR per line; blank line to finish.")
+    while True:
+        t = _ask("  Target (blank to finish): ")
+        if not t:
+            break
+        if not valid_target(t):
+            print(f"  ! not a valid host/CIDR: {t}")
+            continue
+        if t not in targets:
+            targets.append(t)
+    if not targets:
+        print("  No targets entered; the network scanner stays unavailable.")
+        return
+    print("  WARNING: only add hosts/networks you are explicitly authorized")
+    print("  to scan with nmap. This can affect machines other than this one.")
+    path = config.write_user_config({"network_targets": targets})
+    print(f"  Saved {len(targets)} target(s) to {path}")
+
+
 def run_setup(config, *, force: bool = False) -> int:
-    """Pick an AI backend (local model or cloud key), then offer email setup."""
+    """Pick an AI backend (local model or cloud key), then offer email and
+    network-scan-target setup."""
     print("=" * 64)
     print(" vulnscan-ai setup")
     print("=" * 64)
@@ -364,6 +402,7 @@ def run_setup(config, *, force: bool = False) -> int:
         code = _setup_model(config, force=force)
 
     _configure_notifications(config)
+    _configure_network_targets(config)
     config.mark_setup_done()
     return code
 

@@ -64,7 +64,7 @@ No options.
 Detect vulnerabilities, enrich from CVE feeds, print a table, and save findings.
 .TP
 .BI \-\-scanner " NAME"
-Scanner to run (repeatable): \fBdnf\fR, \fBoscap\fR, \fBssh\fR, \fBsystemd\fR, \fBports\fR, \fBwebroot\fR, \fBcontainer\fR, \fBeffective\fR (reboot/restart still pending after a patch), \fBfips\fR (FIPS-mode & crypto-policy posture), or \fBnetwork\fR (remote nmap exposure check; requires an authorized \fInetwork_targets\fR allow-list in the config). Use \fB\-\-all\fR to run every available scanner.
+Scanner to run (repeatable): \fBdnf\fR, \fBoscap\fR, \fBssh\fR, \fBsystemd\fR, \fBports\fR, \fBwebroot\fR, \fBcontainer\fR, \fBeffective\fR (reboot/restart still pending after a patch), \fBfips\fR (FIPS-mode & crypto-policy posture), or \fBnetwork\fR (remote nmap exposure check, IPv4 and IPv6; requires an authorized target allow-list \(em see the \fBnetwork\fR command). Use \fB\-\-all\fR to run every available scanner.
 .TP
 .BI \-\-min\-severity " SEV"
 Only keep findings at or above this severity.
@@ -242,6 +242,23 @@ Fetch fresh data instead of using the on-disk cache.
 .TP
 .BI \-\-limit " N"
 Maximum advisories to show (default 30).
+.SS network
+Manage the \fBnetwork\fR scanner's authorized-target allow-list. Never scans
+itself \(em run the scan with \fBvulnscan-ai scan \-\-scanner network\fR.
+.TP
+.BI \-\-add " HOST/CIDR"
+Authorize a target you may nmap-scan (repeatable), then exit. IPv4/IPv6
+address, CIDR, or hostname.
+.TP
+.BI \-\-remove " HOST/CIDR"
+Remove a target (repeatable), then exit.
+.TP
+.B \-\-list
+Show configured targets and settings, then exit.
+.TP
+.BI \-\-ports " SPEC"
+Port-scan breadth: \fBknown\fR (default), \fBtop1000\fR, \fBall\fR, or a
+literal nmap \fB\-p\fR spec, then exit.
 .SH EXIT STATUS
 .TP
 .B 0

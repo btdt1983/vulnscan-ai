@@ -242,8 +242,8 @@ vulnscan-ai scan --scanner container
 # Audit the FIPS / crypto-policy posture (half-enabled FIPS, LEGACY policy, ...)
 vulnscan-ai scan --scanner fips
 
-# Audit remote hosts you are authorized to test (config-only allow-list —
-# set "network_targets" first; see the `network` scanner below)
+# Audit remote hosts you are authorized to test (authorize targets first —
+# vulnscan-ai network --add 10.0.0.0/24; see the `network` scanner below)
 vulnscan-ai scan --scanner network
 
 # Run every available scanner at once
@@ -328,22 +328,32 @@ The scanners are built to avoid noise:
   or `--all`.
 - **`network`** is the only scanner that inspects machines *other than* the one
   it runs on, so it stays genuinely unavailable — not just quiet — until you
-  explicitly set `"network_targets": ["10.0.0.0/24", "host.example.com"]` (hosts/
-  CIDRs you are **authorized to test**; config-only, no CLI flag). It shells out
-  to `nmap -sV` for host discovery, a scoped port scan and service/version
-  detection, then flags the same plaintext/legacy-protocol and sensitive-service
-  exposures as `ports` — the same risk model, observed remotely instead of via
-  local `ss`. V1 does **not** attempt CVE/version matching (parked; too high a
-  false-positive risk without more validation). Findings carry the remote
-  host in `target` and are detection-only: fixes must be applied on the flagged
-  host itself, so `fix` never proposes or executes commands for them. Optional
-  dependency (`Recommends: nmap`); run it with `--scanner network` or `--all`
-  (a no-op without configured targets). Note `Recommends:` only auto-installs
-  nmap on a fresh `dnf install` — an *upgrade* of an already-installed
-  vulnscan-ai does not retroactively pull in a newly added weak dependency.
-  `vulnscan-ai info` flags this: if nmap is missing it offers to install it
-  now via `dnf` (interactively, TTY only) or prints the command to run
-  yourself.
+  authorize at least one host/CIDR/hostname (IPv4 **and IPv6**) you are
+  **permitted to test**: `vulnscan-ai network --add 10.0.0.0/24` (also
+  `--remove`/`--list`, and the setup wizard offers it), or set
+  `"network_targets": [...]` by hand. There is no per-scan CLI override —
+  `scan` never takes a `--target` flag — only the persisted allow-list. It
+  shells out to `nmap -sV` for host discovery, a scoped port scan and
+  service/version detection (a separate `-6` invocation for any IPv6
+  targets), then flags the same plaintext/legacy-protocol and
+  sensitive-service exposures as `ports` — the same risk model, observed
+  remotely instead of via local `ss` — **plus** a confidence-gated fallback
+  that catches a known-risky service fingerprinted on a *non-standard* port
+  (only when nmap's `-sV` match is a real confirmed probe, never its
+  unconfirmed port-number guess). That fallback only has ports to look at
+  when `"network_scan_ports"` is widened past the default `"known"` (fixed
+  risky-port list) to `"top1000"`, `"all"`, or a literal `-p` spec —
+  `vulnscan-ai network --ports top1000`. Still **no** CVE/version matching
+  (parked; too high a false-positive risk without more validation). Findings
+  carry the remote host in `target` and are detection-only: fixes must be
+  applied on the flagged host itself, so `fix` never proposes or executes
+  commands for them. Optional dependency (`Recommends: nmap`); run it with
+  `--scanner network` or `--all` (a no-op without configured targets). Note
+  `Recommends:` only auto-installs nmap on a fresh `dnf install` — an
+  *upgrade* of an already-installed vulnscan-ai does not retroactively pull
+  in a newly added weak dependency. `vulnscan-ai info` flags this: if nmap is
+  missing it offers to install it now via `dnf` (interactively, TTY only) or
+  prints the command to run yourself.
 - A **baseline** silences accepted findings: `"ignore": [...]` in the config,
   one-per-line in `~/.config/vulnscan-ai/ignore`, `VULNSCANAI_IGNORE=a,b`, or
   `--ignore PATTERN`. Patterns match a finding id, CVE, advisory, package, or

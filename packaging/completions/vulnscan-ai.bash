@@ -3,7 +3,7 @@ _vulnscan_ai() {
     local cur prev cmds global i cmd opts
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    cmds="menu info scan fix rollback report providers setup update-oval scheduled dashboard audit news"
+    cmds="menu info scan fix rollback report providers setup update-oval scheduled dashboard audit news network"
     global="--help --version --no-banner --config --state-dir --provider --model"
 
     # value completions that depend on the previous word
@@ -18,11 +18,13 @@ _vulnscan_ai() {
             COMPREPLY=($(compgen -W "cis-l1 cis-l2 cis-ws-l1 cis-ws-l2 stig stig-gui pci-dss hipaa ospp cui anssi-minimal anssi-intermediary anssi-enhanced anssi-high e8" -- "$cur")); return;;
         --source)
             COMPREPLY=($(compgen -W "kev nvd distro" -- "$cur")); return;;
+        --ports)
+            COMPREPLY=($(compgen -W "known top1000 all" -- "$cur")); return;;
         --config|--pdf|--json|--sarif|--compliance-datastream|--export-script|--export-ansible|-o|--output)
             COMPREPLY=($(compgen -f -- "$cur")); return;;
         --state-dir)
             COMPREPLY=($(compgen -d -- "$cur")); return;;
-        --model|--keep|--user|--port|--bind|--allow|--deny|--limit)
+        --model|--keep|--user|--port|--bind|--allow|--deny|--limit|--add|--remove)
             return;;
     esac
 
@@ -30,7 +32,7 @@ _vulnscan_ai() {
     cmd=""
     for ((i=1; i<COMP_CWORD; i++)); do
         case "${COMP_WORDS[i]}" in
-            menu|info|scan|fix|rollback|report|providers|setup|update-oval|scheduled|dashboard|audit|news)
+            menu|info|scan|fix|rollback|report|providers|setup|update-oval|scheduled|dashboard|audit|news|network)
                 cmd="${COMP_WORDS[i]}"; break;;
         esac
     done
@@ -48,6 +50,7 @@ _vulnscan_ai() {
         dashboard) opts="--set-password --user --allow --deny --list --enable-fix --disable-fix --port --bind";;
         audit)     opts="--limit --json";;
         news)      opts="--source --refresh --limit";;
+        network)   opts="--add --remove --list --ports";;
         *)         opts="";;
     esac
     COMPREPLY=($(compgen -W "$opts --help" -- "$cur"))

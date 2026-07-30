@@ -37,7 +37,7 @@ from vulnscanai.scanners.systemd_security import (
 from vulnscanai.scanners.ports import (
     audit_ports, classify, matchers_to_predicate, parse_nft_ruleset, parse_ss,
 )
-from vulnscanai.net_classify import flagged_port_spec
+from vulnscanai.net_classify import classify_by_service, flagged_port_spec
 
 
 def _finding(**kw):
@@ -1073,6 +1073,52 @@ class TestWizardConfig(unittest.TestCase):
                 if old is not None:
                     os.environ["HOME"] = old
 
+    def test_cmd_network_add_remove_and_ports_persist(self):
+        from vulnscanai.config import Config
+        from vulnscanai.cli import build_parser, cmd_network
+        old = os.environ.get("HOME")
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["HOME"] = d
+            try:
+                p = build_parser()
+                c = Config()
+                cfgpath = c.user_config_path()
+                rc = cmd_network(c, p.parse_args(
+                    ["network", "--add", "10.0.0.5", "--add", "not valid;"]))
+                self.assertEqual(rc, 0)
+                self.assertEqual(Config.load(cfgpath).network_targets, ["10.0.0.5"])
+
+                c = Config.load(cfgpath)
+                cmd_network(c, p.parse_args(["network", "--add", "2001:db8::1"]))
+                self.assertEqual(Config.load(cfgpath).network_targets,
+                                 ["10.0.0.5", "2001:db8::1"])
+
+                c = Config.load(cfgpath)
+                cmd_network(c, p.parse_args(["network", "--remove", "10.0.0.5"]))
+                self.assertEqual(Config.load(cfgpath).network_targets, ["2001:db8::1"])
+
+                c = Config.load(cfgpath)
+                cmd_network(c, p.parse_args(["network", "--ports", "top1000"]))
+                self.assertEqual(Config.load(cfgpath).network_scan_ports, "top1000")
+            finally:
+                if old is not None:
+                    os.environ["HOME"] = old
+
+    def test_cmd_network_bare_lists_state(self):
+        from vulnscanai.config import Config
+        from vulnscanai.cli import build_parser, cmd_network
+        import io
+        import contextlib
+        p = build_parser()
+        c = Config()
+        c.network_targets = ["10.0.0.5"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd_network(c, p.parse_args(["network"]))
+        self.assertEqual(rc, 0)
+        self.assertIn("10.0.0.5", buf.getvalue())
+        self.assertIn("scan --scanner network", buf.getvalue())
+
     def test_should_offer_setup_guards(self):
         from vulnscanai.config import Config
         from vulnscanai.wizard import should_offer_setup
@@ -1090,6 +1136,43 @@ class TestWizardConfig(unittest.TestCase):
             c.mark_setup_done()
             self.assertTrue(c.is_setup_done())
             self.assertFalse(should_offer_setup(c, "scan"))
+
+    def test_configure_network_targets_saves_valid_only(self):
+        import vulnscanai.wizard as W
+        home = tempfile.mkdtemp()
+        # y (configure now), then a good target, a garbage one (rejected,
+        # loop continues), a good IPv6 one, then blank to finish.
+        answers = iter(["y", "10.0.0.5", "bad;target", "2001:db8::1", ""])
+        orig_ask = W._ask
+        orig_home = os.environ.get("HOME")
+        W._ask = lambda prompt="": next(answers, "")
+        os.environ["HOME"] = home
+        try:
+            W._configure_network_targets(Config())
+            saved = json.load(open(os.path.join(
+                home, ".config", "vulnscan-ai", "config.json")))
+        finally:
+            W._ask = orig_ask
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
+        self.assertEqual(saved["network_targets"], ["10.0.0.5", "2001:db8::1"])
+
+    def test_configure_network_targets_declined_no_write(self):
+        import vulnscanai.wizard as W
+        home = tempfile.mkdtemp()
+        answers = iter(["n"])
+        orig_ask = W._ask
+        orig_home = os.environ.get("HOME")
+        W._ask = lambda prompt="": next(answers, "")
+        os.environ["HOME"] = home
+        try:
+            W._configure_network_targets(Config())
+            cfgpath = os.path.join(home, ".config", "vulnscan-ai", "config.json")
+            self.assertFalse(os.path.exists(cfgpath))
+        finally:
+            W._ask = orig_ask
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
 
 
 class TestScanDiff(unittest.TestCase):
@@ -2537,19 +2620,23 @@ class TestMenu(unittest.TestCase):
                                 "--fail-on", "important"])
         self._parses(argv)
 
-    def test_network_no_targets_pauses_so_hint_is_readable(self):
-        # Regression: without a pause, the "set network_targets" hint printed
-        # right before returning to the (curses) menu got wiped by the next
-        # redraw before the operator could read it -- looked like option 3
-        # "did nothing".
-        self._stub()
+    def test_network_no_targets_run_returns_real_argv_no_internal_pause(self):
+        # Regression (0.4.10): without a pause, a hint printed right before
+        # returning to the (curses) menu got wiped by the next redraw before
+        # the operator could read it. Fixed structurally now -- every branch
+        # of the fan-out returns a real argv (which run_menu's loop always
+        # pauses after) or a genuine cancel (which correctly never pauses),
+        # so no builder needs its own explicit _pause() call any more.
+        self._stub(choose=["run"])
         cfg = Config()
         cfg.network_targets = []
-        self.assertIsNone(self.menu._b_network(cfg))
-        self.assertEqual(self._pauses, [True])
+        argv = self.menu._b_network(cfg)
+        self.assertEqual(argv, ["scan", "--scanner", "network"])
+        self.assertEqual(self._pauses, [])
+        self._parses(argv)
 
     def test_network_confirmed_argv(self):
-        self._stub(yesno=[True], ask=["/tmp/net.pdf"])
+        self._stub(choose=["run"], yesno=[True], ask=["/tmp/net.pdf"])
         cfg = Config()
         cfg.network_targets = ["10.0.0.5"]
         argv = self.menu._b_network(cfg)
@@ -2560,11 +2647,39 @@ class TestMenu(unittest.TestCase):
     def test_network_declined_no_pause(self):
         # Declining the authorization prompt is itself the explanation --
         # no extra message to protect from the next redraw.
-        self._stub(yesno=[False])
+        self._stub(choose=["run"], yesno=[False])
         cfg = Config()
         cfg.network_targets = ["10.0.0.5"]
         self.assertIsNone(self.menu._b_network(cfg))
         self.assertEqual(self._pauses, [])
+
+    def test_network_list_argv(self):
+        self._stub(choose=["list"])
+        argv = self.menu._b_network(Config())
+        self.assertEqual(argv, ["network", "--list"])
+        self._parses(argv)
+
+    def test_network_add_argv(self):
+        self._stub(choose=["add"], ask=["10.0.0.0/24"])
+        argv = self.menu._b_network(Config())
+        self.assertEqual(argv, ["network", "--add", "10.0.0.0/24"])
+        self._parses(argv)
+
+    def test_network_add_cancelled(self):
+        self._stub(choose=["add"], ask=[""])
+        self.assertIsNone(self.menu._b_network(Config()))
+
+    def test_network_remove_argv(self):
+        self._stub(choose=["remove"], ask=["10.0.0.5"])
+        cfg = Config()
+        cfg.network_targets = ["10.0.0.5"]
+        argv = self.menu._b_network(cfg)
+        self.assertEqual(argv, ["network", "--remove", "10.0.0.5"])
+        self._parses(argv)
+
+    def test_network_cancel_at_top(self):
+        self._stub(choose=[self.menu._CANCEL])
+        self.assertIsNone(self.menu._b_network(Config()))
 
     def test_trivial_builders(self):
         for key, expect in (("info", ["info"]), ("providers", ["providers"]),
@@ -3859,6 +3974,52 @@ class TestFipsPosture(unittest.TestCase):
         self.assertEqual(self._cats(f), {"required-off"})
 
 
+class TestNetClassify(unittest.TestCase):
+    """classify_by_service(): the nmap -sV probe-name fallback used to flag a
+    risky service found on a non-standard port."""
+
+    def test_classify_by_service_known_names(self):
+        cases = {
+            "ftp": ("plaintext", "ftp"),
+            "ms-sql-s": ("sensitive", "mssql"),
+            "oracle-tns": ("sensitive", "oracle"),
+            "memcached": ("sensitive", "memcached"),
+            "cassandra-native": ("sensitive", "cassandra"),
+            "mongodb": ("sensitive", "mongodb"),
+            "redis": ("sensitive", "redis"),
+            "mysql": ("sensitive", "mysql/mariadb"),
+            "postgresql": ("sensitive", "postgresql"),
+            "amqp": ("sensitive", "amqp/rabbitmq"),
+            "x11": ("plaintext", "x11"),
+            "login": ("plaintext", "rlogin"),
+            "shell": ("plaintext", "rsh"),
+        }
+        for name, (category, label) in cases.items():
+            hit = classify_by_service(name)
+            self.assertIsNotNone(hit, name)
+            self.assertEqual((hit[0], hit[2]), (category, label), name)
+
+    def test_classify_by_service_case_insensitive(self):
+        self.assertEqual(classify_by_service("X11"), classify_by_service("x11"))
+
+    def test_classify_by_service_unknown_returns_none(self):
+        self.assertIsNone(classify_by_service("some-made-up-service"))
+        self.assertIsNone(classify_by_service(""))
+        self.assertIsNone(classify_by_service(None))
+
+    def test_classify_by_service_excludes_generic_names(self):
+        # These resolve generically for countless ordinary services -- mapping
+        # them would flag every plain web server as a sensitive exposure.
+        for generic in ("http", "https", "ssl", "tcpwrapped", "unknown"):
+            self.assertIsNone(classify_by_service(generic), generic)
+
+    def test_classify_by_service_excludes_no_fingerprint_services(self):
+        # No real nmap -sV match name exists for these; a false "coverage"
+        # entry would silently never fire.
+        for absent in ("nfs", "etcd", "couchdb", "rabbitmq-mgmt"):
+            self.assertIsNone(classify_by_service(absent), absent)
+
+
 class TestNetworkScanner(unittest.TestCase):
     """The remote nmap network-exposure scanner: all parse/audit logic is
     unit-testable without nmap or any real target on the host."""
@@ -3906,12 +4067,23 @@ class TestNetworkScanner(unittest.TestCase):
         net = self._net()
         good = net._valid_targets([
             "10.0.0.5", "10.0.0.0/24", "host.example.com", " 10.0.0.9 ",
+            "fe80::1", "2001:db8::1", "2001:db8::/32",
         ])
         self.assertEqual(good, ["10.0.0.5", "10.0.0.0/24", "host.example.com",
-                                "10.0.0.9"])
-        bad = net._valid_targets(["", "   ", "-oX", "10.0.0.5:22", "fe80::1",
+                                "10.0.0.9", "fe80::1", "2001:db8::1",
+                                "2001:db8::/32"])
+        bad = net._valid_targets(["", "   ", "-oX", "10.0.0.5:22",
                                   "evil;rm -rf", "$(whoami)"])
         self.assertEqual(bad, [])
+
+    def test_partition_targets_v4_hosts_and_v6(self):
+        net = self._net()
+        v4_hosts, v6 = net._partition_targets([
+            "10.0.0.5", "10.0.0.0/24", "host.example.com",
+            "2001:db8::1", "fe80::1",
+        ])
+        self.assertEqual(v4_hosts, ["10.0.0.5", "10.0.0.0/24", "host.example.com"])
+        self.assertEqual(v6, ["2001:db8::1", "fe80::1"])
 
     def test_parse_nmap_xml_basic(self):
         net = self._net()
@@ -3965,6 +4137,44 @@ class TestNetworkScanner(unittest.TestCase):
         self.assertEqual(hosts[0].address, "127.0.0.1")
         self.assertEqual(hosts[0].ports[0].port, 6010)
 
+    def test_parse_nmap_xml_reads_method_and_conf(self):
+        net = self._net()
+        real_shaped = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE nmaprun>\n'
+            '<nmaprun scanner="nmap" version="7.92">\n'
+            '<host><status state="up" reason="syn-ack"/>\n'
+            '<address addr="10.0.0.5" addrtype="ipv4"/>\n'
+            '<ports><port protocol="tcp" portid="16379">'
+            '<state state="open" reason="syn-ack"/>'
+            '<service name="redis" method="probed" conf="10"/></port></ports>'
+            '</host></nmaprun>\n'
+        )
+        hosts = net.parse_nmap_xml(real_shaped)
+        p = hosts[0].ports[0]
+        self.assertEqual((p.method, p.conf), ("probed", 10))
+        # Absent on the plain NMAP_XML fixture -> tolerant defaults.
+        up = next(h for h in net.parse_nmap_xml(self.NMAP_XML) if h.address == "10.0.0.5")
+        self.assertEqual((up.ports[0].method, up.ports[0].conf), ("", 0))
+
+    def test_parse_nmap_xml_ipv6_host(self):
+        net = self._net()
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE nmaprun>\n'
+            '<nmaprun scanner="nmap" version="7.92">\n'
+            '<host><status state="up" reason="syn-ack"/>\n'
+            '<address addr="2001:db8::5" addrtype="ipv6"/>\n'
+            '<ports><port protocol="tcp" portid="23">'
+            '<state state="open" reason="syn-ack"/>'
+            '<service name="telnet"/></port></ports>'
+            '</host></nmaprun>\n'
+        )
+        hosts = net.parse_nmap_xml(xml)
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual(hosts[0].address, "2001:db8::5")
+        self.assertEqual(hosts[0].ports[0].port, 23)
+
     def test_audit_network_flags_plaintext_and_sensitive(self):
         net = self._net()
         host = net.NmapHost(address="10.0.0.5", state="up", ports=[
@@ -3995,6 +4205,81 @@ class TestNetworkScanner(unittest.TestCase):
         findings = net.audit_network([host])
         self.assertEqual(len(findings), 1)
 
+    def test_audit_network_port_classification_unchanged_when_both_available(self):
+        # A known port stays classified by PORT NUMBER even when service_name
+        # disagrees or carries high-confidence probed metadata -- the
+        # port-number path always wins, and existing findings must not change
+        # shape just because feature 3 was added.
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=21, service_name="not-actually-ftp",
+                        method="probed", conf=10),
+        ])
+        findings = net.audit_network([host])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].raw["detected_by"], "port")
+        self.assertEqual(findings[0].raw["service"], "ftp")
+
+    def test_audit_network_service_fallback_fires_on_probed_high_conf(self):
+        # redis on a non-standard port, confidently probed -> still flagged.
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=16379, service_name="redis",
+                        method="probed", conf=10),
+        ])
+        findings = net.audit_network([host])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].raw["detected_by"], "service-name")
+        self.assertEqual(findings[0].raw["service"], "redis")
+        self.assertIn("non-default port", findings[0].description)
+
+    def test_audit_network_service_fallback_skipped_for_table_method(self):
+        # nmap's static-table guess (unconfirmed) must never trigger the
+        # fallback -- it's circular (port->name guess, not a real probe).
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=16379, service_name="redis",
+                        method="table", conf=3),
+        ])
+        self.assertEqual(net.audit_network([host]), [])
+
+    def test_audit_network_service_fallback_skipped_for_low_conf(self):
+        net = self._net()
+        host = net.NmapHost(address="10.0.0.5", state="up", ports=[
+            net.NmapPort(proto="tcp", port=16379, service_name="redis",
+                        method="probed", conf=3),
+        ])
+        self.assertEqual(net.audit_network([host]), [])
+
+    def test_nmap_port_args_known_default(self):
+        net = self._net()
+        self.assertEqual(net._nmap_port_args(Config()),
+                         ["-p", flagged_port_spec()])
+
+    def test_nmap_port_args_top1000(self):
+        net = self._net()
+        cfg = Config()
+        cfg.network_scan_ports = "top1000"
+        self.assertEqual(net._nmap_port_args(cfg), ["--top-ports", "1000"])
+
+    def test_nmap_port_args_all(self):
+        net = self._net()
+        cfg = Config()
+        cfg.network_scan_ports = "all"
+        self.assertEqual(net._nmap_port_args(cfg), ["-p", "1-65535"])
+
+    def test_nmap_port_args_literal_spec(self):
+        net = self._net()
+        cfg = Config()
+        cfg.network_scan_ports = "22,2222,8080-8090"
+        self.assertEqual(net._nmap_port_args(cfg), ["-p", "22,2222,8080-8090"])
+
+    def test_nmap_port_args_malformed_falls_back_to_known(self):
+        net = self._net()
+        cfg = Config()
+        cfg.network_scan_ports = "; rm -rf /"
+        self.assertEqual(net._nmap_port_args(cfg), ["-p", flagged_port_spec()])
+
     def test_available_requires_nmap_and_targets(self):
         from unittest import mock
         net = self._net()
@@ -4019,6 +4304,92 @@ class TestNetworkScanner(unittest.TestCase):
             network_targets = []
 
         self.assertEqual(net.NetworkScanner(_Cfg()).scan(), [])
+
+    _V4_SCAN_XML = (
+        '<?xml version="1.0"?><!DOCTYPE nmaprun><nmaprun>'
+        '<host><status state="up" reason="syn-ack"/>'
+        '<address addr="10.0.0.5" addrtype="ipv4"/>'
+        '<ports><port protocol="tcp" portid="21">'
+        '<state state="open" reason="syn-ack"/>'
+        '<service name="ftp"/></port></ports></host></nmaprun>'
+    )
+    _V6_SCAN_XML = (
+        '<?xml version="1.0"?><!DOCTYPE nmaprun><nmaprun>'
+        '<host><status state="up" reason="syn-ack"/>'
+        '<address addr="2001:db8::5" addrtype="ipv6"/>'
+        '<ports><port protocol="tcp" portid="23">'
+        '<state state="open" reason="syn-ack"/>'
+        '<service name="telnet"/></port></ports></host></nmaprun>'
+    )
+
+    def test_scan_runs_two_invocations_for_mixed_targets(self):
+        from unittest import mock
+        net = self._net()
+
+        class _Cfg:
+            network_targets = ["10.0.0.5", "2001:db8::5"]
+            network_scan_timeout = 900
+
+        calls = []
+
+        def _fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            if "-6" in cmd:
+                return 0, self._V6_SCAN_XML, ""
+            return 0, self._V4_SCAN_XML, ""
+
+        with mock.patch.object(net, "have", return_value=True), \
+             mock.patch.object(net, "run", side_effect=_fake_run):
+            findings = net.NetworkScanner(_Cfg()).scan()
+
+        self.assertEqual(len(calls), 2)
+        v4_call = next(c for c in calls if "-6" not in c)
+        v6_call = next(c for c in calls if "-6" in c)
+        self.assertIn("10.0.0.5", v4_call)
+        self.assertNotIn("2001:db8::5", v4_call)
+        self.assertIn("2001:db8::5", v6_call)
+        self.assertNotIn("10.0.0.5", v6_call)
+        self.assertEqual({f.target for f in findings}, {"10.0.0.5", "2001:db8::5"})
+
+    def test_scan_v6_only_targets_adds_dash_six_only(self):
+        from unittest import mock
+        net = self._net()
+
+        class _Cfg:
+            network_targets = ["2001:db8::5"]
+            network_scan_timeout = 900
+
+        calls = []
+
+        def _fake_run(cmd, timeout=300):
+            calls.append(cmd)
+            return 0, self._V6_SCAN_XML, ""
+
+        with mock.patch.object(net, "have", return_value=True), \
+             mock.patch.object(net, "run", side_effect=_fake_run):
+            net.NetworkScanner(_Cfg()).scan()
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("-6", calls[0])
+
+    def test_scan_one_family_failure_does_not_drop_the_other(self):
+        from unittest import mock
+        net = self._net()
+
+        class _Cfg:
+            network_targets = ["10.0.0.5", "2001:db8::5"]
+            network_scan_timeout = 900
+
+        def _fake_run(cmd, timeout=300):
+            if "-6" in cmd:
+                raise TimeoutError("boom")
+            return 0, self._V4_SCAN_XML, ""
+
+        with mock.patch.object(net, "have", return_value=True), \
+             mock.patch.object(net, "run", side_effect=_fake_run):
+            findings = net.NetworkScanner(_Cfg()).scan()
+
+        self.assertEqual({f.target for f in findings}, {"10.0.0.5"})
 
 
 class TestAuditRegressions(unittest.TestCase):

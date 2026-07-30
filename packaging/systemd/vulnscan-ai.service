@@ -10,6 +10,12 @@ Type=oneshot
 # (no --plan) needs no key and sends nothing off the host.
 EnvironmentFile=-/etc/vulnscan-ai/vulnscan-ai.env
 ExecStart=/usr/bin/vulnscan-ai scheduled --keep 30
+# Explicit and generous, not systemd's ~90s default: with the network
+# scanner enabled, one scan can run TWO nmap invocations (IPv4 + IPv6, each
+# capped by network_scan_timeout, default 900s each) on top of every other
+# scanner, so the default DefaultTimeoutStartSec would kill a legitimate
+# scan mid-run.
+TimeoutStartSec=3600
 
 # Be a good neighbour on production hosts.
 Nice=10

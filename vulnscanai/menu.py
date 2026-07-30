@@ -561,15 +561,35 @@ def _b_compliance(cfg) -> Optional[List[str]]:
 
 def _b_network(cfg) -> Optional[List[str]]:
     targets = list(getattr(cfg, "network_targets", None) or [])
+    run_label = (f"Run a scan against {len(targets)} configured target(s)"
+                 if targets else "Run a scan (no targets configured yet)")
+    action = _choose("Network scan", [
+        (run_label, "run"),
+        ("Add a target (host/IP/CIDR)", "add"),
+        ("Remove a target", "remove"),
+        ("Show configured targets", "list"),
+    ])
+    if action is _CANCEL:
+        return None
+    if action == "list":
+        return ["network", "--list"]
+    if action == "add":
+        _eprint("Only add hosts/networks you are explicitly authorized to test.")
+        t = _ask("Host, IP, or CIDR to add", "")
+        if not t:
+            return None
+        return ["network", "--add", t]
+    if action == "remove":
+        t = _ask("Host, IP, or CIDR to remove", "")
+        if not t:
+            return None
+        return ["network", "--remove", t]
+    # run
     if not targets:
         _eprint(
-            "\n  network_targets is empty in your config -- this scanner stays\n"
-            "  disabled until you set it (hosts/CIDRs you are explicitly\n"
-            "  authorized to test) in ~/.config/vulnscan-ai/config.json or\n"
-            "  /etc/vulnscan-ai/config.json, e.g.:\n"
-            '    "network_targets": ["10.0.0.0/24", "scanhost.example.com"]\n')
-        _pause()
-        return None
+            "\n  network_targets is empty -- this scanner stays disabled until\n"
+            "  you add one (hosts/CIDRs you are explicitly authorized to test).\n")
+        return ["scan", "--scanner", "network"]
     preview = ", ".join(targets[:5]) + (", ..." if len(targets) > 5 else "")
     if not _ask_yesno(
             f"Scan {len(targets)} configured target(s) ({preview}) with nmap? "

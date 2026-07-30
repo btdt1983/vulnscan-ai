@@ -25,6 +25,7 @@ vulnscan-ai [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
 | [`scheduled`](#scheduled) | Non-interactive scan + dated report (systemd timer/cron) |
 | [`dashboard`](#dashboard) | Serve saved findings over an HTTPS login dashboard |
 | [`news`](#news) | Show recent vulnerability advisories (CISA KEV, NVD, distro errata) |
+| [`network`](#network) | Manage the `network` scanner's authorized-target allow-list (does not scan) |
 
 ---
 
@@ -60,8 +61,9 @@ Wherever `--min-severity` / `--fail-on` appear, use one of:
 ## `menu`
 
 Launch an interactive, menu-driven front-end so you don't have to remember flags.
-It covers **every** command: scan, compliance, network, fix, rollback, audit,
-report, news, info, providers, dashboard, scheduled, update-oval and setup.
+It covers **every** command: scan (including the `network` scanner itself),
+compliance, fix, rollback, audit, report, news, info, providers, dashboard,
+`network` (manage authorized scan targets), scheduled, update-oval and setup.
 
 ```bash
 vulnscan-ai menu     # explicit
@@ -175,24 +177,37 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 
 > **`network` scanner.** The only scanner that inspects machines *other than*
 > the one it runs on, so it stays genuinely unavailable — not just quiet —
-> until you explicitly set `"network_targets": ["10.0.0.0/24",
-> "host.example.com"]` in the config (hosts/CIDRs you are **authorized to
-> test**; config-only, no CLI flag or env override). It shells out to
-> `nmap -sV` for host discovery, a scoped port scan and service/version
-> detection, then flags the same plaintext/legacy-protocol and
-> sensitive-service exposures as `ports` — the same risk model, observed
-> remotely instead of via local `ss`. V1 does **not** attempt CVE/version
-> matching on detected services (parked; too high a false-positive risk
-> without more validation). Findings carry the remote host in `target` and
-> are detection-only: since a fix must run on the flagged host, not this one,
-> `fix` never proposes or executes commands for them — only human-readable
-> steps. Optional dependency (`Recommends: nmap`); run it with `--scanner
-> network` or `--all` (a no-op without configured targets). `Recommends:`
-> only auto-installs nmap on a fresh `dnf install` — an *upgrade* of an
-> already-installed vulnscan-ai does not retroactively pull in a newly added
-> weak dependency. `vulnscan-ai info` flags this: if nmap is missing it
-> offers to install it now via `dnf` (interactively, TTY only) or prints the
-> command to run yourself.
+> until you authorize at least one host/CIDR/hostname (IPv4 **and IPv6**,
+> e.g. `2001:db8::/64`) you are **permitted to test**: `vulnscan-ai network
+> --add ...` (see [`network`](#network) below), the setup wizard, or by hand
+> via `"network_targets": [...]` in the config. There is no per-scan CLI
+> override or env override — `scan` never takes a `--target` flag — only the
+> persisted allow-list. It shells out to `nmap -sV` for host discovery, a
+> scoped port scan and service/version detection (IPv6 targets run as a
+> separate `-6` invocation, since nmap can't mix address families in one
+> run), then flags the same plaintext/legacy-protocol and sensitive-service
+> exposures as `ports` — the same risk model, observed remotely instead of
+> via local `ss` — **plus** a fallback that catches a known-risky service
+> fingerprinted on a *non-standard* port, gated on nmap reporting a real
+> confirmed probe match (never its unconfirmed port-number guess). That
+> fallback only has non-default ports to look at when
+> `"network_scan_ports"` is widened past the default `"known"` (the fixed
+> risky-port list) — `"top1000"` (nmap `--top-ports 1000`), `"all"`
+> (`-p 1-65535`), or a literal `-p` spec (`vulnscan-ai network --ports ...`).
+> Coverage isn't uniform: some services (`nfs`, `etcd`, `couchdb`,
+> `rabbitmq-mgmt`) have no distinctive nmap fingerprint to classify by name
+> at all, so a non-standard port only gets caught for them via the port
+> number itself. Still **no** CVE/version matching on detected services
+> (parked; too high a false-positive risk without more validation). Findings
+> carry the remote host in `target` and are detection-only: since a fix must
+> run on the flagged host, not this one, `fix` never proposes or executes
+> commands for them — only human-readable steps. Optional dependency
+> (`Recommends: nmap`); run it with `--scanner network` or `--all` (a no-op
+> without configured targets). `Recommends:` only auto-installs nmap on a
+> fresh `dnf install` — an *upgrade* of an already-installed vulnscan-ai does
+> not retroactively pull in a newly added weak dependency. `vulnscan-ai info`
+> flags this: if nmap is missing it offers to install it now via `dnf`
+> (interactively, TTY only) or prints the command to run yourself.
 
 > **Exploitation intel (CISA KEV + EPSS).** During enrichment, every finding's
 > CVE is checked against the **CISA KEV** catalog (actively exploited in the
@@ -529,8 +544,9 @@ Interactive first-run wizard. Choose how the AI remediation step gets its model:
   ids** for that provider (with a *custom* option and a *default* fallback), so a
   typo'd id can't slip through; for Claude it also asks for the reasoning effort.
 
-It then offers to set up email notifications. Also runs automatically on the
-first interactive use.
+It then offers to set up email notifications, then authorized network-scan
+targets for the `network` scanner (skipped by default — most hosts never
+touch this). Also runs automatically on the first interactive use.
 
 **Re-run `setup` any time to switch backend, provider or model.** If a key for
 the chosen cloud provider is already saved, it offers to **reuse it** — so you
@@ -696,6 +712,45 @@ Advisories are cached under `<state-dir>/news-cache.json` so the command (and th
 dashboard tab) work offline. Items whose CVE matches the last scan are tagged
 `[on-host]`; actively-exploited ones carry `[KEV]` and a high `[EPSS xx%]` score.
 Configure with `news_enabled`, `news_sources`, `news_refresh_hours`.
+
+---
+
+## `network`
+
+Manage the [`network` scanner](#scan)'s authorized-target allow-list. This
+command only edits `network_targets`/`network_scan_ports` — it **never
+scans**; run the scan itself with `vulnscan-ai scan --scanner network`.
+
+```
+vulnscan-ai network [--add HOST/CIDR]... [--remove HOST/CIDR]...
+                    [--list] [--ports SPEC]
+```
+
+| Option | Description |
+|---|---|
+| `--add HOST/CIDR` | Authorize a target you may nmap-scan (repeatable), then exit. IPv4/IPv6 address, CIDR, or hostname. |
+| `--remove HOST/CIDR` | Remove a target (repeatable), then exit. |
+| `--list` | Show configured targets and settings, then exit. |
+| `--ports SPEC` | Port-scan breadth: `known` (default, the fixed risky-port list) \| `top1000` \| `all` \| a literal nmap `-p` spec (e.g. `22,2222,8080-8090`), then exit. |
+
+A bare `vulnscan-ai network` (no options) shows the same state as `--list`.
+
+```bash
+# Authorize a lab subnet and a single IPv6 host
+vulnscan-ai network --add 10.0.0.0/24 --add 2001:db8::5
+
+# Remove one, list what remains
+vulnscan-ai network --remove 10.0.0.0/24
+vulnscan-ai network --list
+
+# Widen the port scan so the service-name fallback has non-standard ports
+# to actually look at (slower, noisier — not the default)
+vulnscan-ai network --ports top1000
+```
+
+> Only add hosts/networks you are **explicitly authorized** to test with
+> nmap. There is no per-scan `--target` override on `scan` itself — this
+> command is the only way to change what gets probed.
 
 ---
 

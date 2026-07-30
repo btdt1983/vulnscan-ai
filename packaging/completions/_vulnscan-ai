@@ -18,6 +18,7 @@ _vulnscan-ai() {
     'dashboard:serve saved findings over an HTTPS login dashboard'
     'audit:show the remediation audit log (applied fixes & rollbacks)'
     'news:show recent vulnerability advisories (CISA KEV, NVD, errata)'
+    'network:manage the network scanner'\''s authorized-target allow-list'
   )
   sev=(low moderate important critical)
   scanners=(dnf oscap ssh systemd ports webroot container effective fips network)
@@ -106,6 +107,12 @@ _vulnscan-ai() {
             '--source[only one feed source]:source:(kev nvd distro)' \
             '--refresh[fetch fresh data instead of the cache]' \
             '--limit[max advisories to show]:n:' ;;
+        network)
+          _arguments \
+            '*--add[authorize a target]:host/cidr:' \
+            '*--remove[remove a target]:host/cidr:' \
+            '--list[show configured targets and settings, then exit]' \
+            '--ports[port-scan breadth]:spec:(known top1000 all)' ;;
         *) _message 'no more arguments' ;;
       esac ;;
   esac

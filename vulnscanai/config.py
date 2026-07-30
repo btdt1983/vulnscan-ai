@@ -47,13 +47,24 @@ class Config:
     oval_max_age_days: int = 7               # OVAL considered stale past this age
     fips_required: bool = False              # treat a non-FIPS host as a finding (fips scanner)
     # Remote network-exposure scanning (network scanner): an explicit allow-list
-    # of hosts/CIDRs (IPv4/hostnames; no IPv6 in v1) the operator is authorized
-    # to nmap-scan. Empty by default -- the scanner stays genuinely unavailable
+    # of hosts/CIDRs/hostnames (IPv4 and IPv6) the operator is authorized to
+    # nmap-scan. Empty by default -- the scanner stays genuinely unavailable
     # (not just "0 findings") until this is set, since unlike every other
-    # scanner it can affect machines other than the one being run on. Config-
-    # only by design: no CLI flag and no env-var override (matches fips_required).
+    # scanner it can affect machines other than the one being run on. No
+    # per-scan CLI override (`scan` never takes a `--target` flag) -- manage
+    # the persisted list with `vulnscan-ai network --add/--remove/--list`.
     network_targets: List[str] = field(default_factory=list)
-    network_scan_timeout: int = 900          # seconds; overall nmap invocation cap
+    network_scan_timeout: int = 900          # seconds; overall nmap invocation cap (applied per address family)
+    # Port breadth for the network scanner's nmap -sV probe: "known" (default;
+    # only the fixed plaintext/sensitive port list from net_classify.py) |
+    # "top1000" (nmap --top-ports 1000) | "all" (-p 1-65535) | a literal nmap
+    # -p spec (e.g. "22,2222,8080-8090"). Widening this is what makes
+    # service-name-based classification of non-standard ports possible, at
+    # the cost of a slower/noisier scan -- not a safety rail like
+    # network_targets, just a performance tradeoff, so no coverage guarantee:
+    # some services (nfs, etcd, couchdb, rabbitmq-mgmt) have no nmap
+    # fingerprint distinctive enough to classify by name at all.
+    network_scan_ports: str = "known"
     # Compliance benchmark scanning (scan --compliance <profile>).
     compliance_profile: str = "cis-l1"       # default XCCDF profile (alias or id)
     compliance_datastream: Optional[str] = None  # SCAP datastream path; None = auto-detect
