@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.12
+Version:        0.4.13
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,26 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jul 31 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.13-1
+- Fix: a scan covering only some scanners (the configured default, an
+  explicit `--scanner`, or the dashboard's old cfg.scanners-only default)
+  fully overwrote `findings.json`, silently discarding every OTHER
+  scanner's last results. Concretely: probing just the `network` scanner
+  (a legitimate narrow check) wiped out real dnf/oscap/ssh findings from
+  the last full scan. Fixed via `_merge_with_previous()`: a partial run now
+  carries forward any previously-saved finding whose source wasn't part of
+  this run; only `--all` (or a `--scanner` list covering every scanner)
+  still fully replaces the saved set.
+- Fix: the dashboard's "Scan now" button only ran the configured default
+  scanner list (`cfg.scanners`, typically just `dnf`), so it could show far
+  fewer findings than a real full scan with no indication why. It now runs
+  every available scanner, like `scan --all`.
+- Fix: `fix`/`rollback`/`report` exited 1 with zero explanation when there
+  were no actionable findings -- in the interactive menu this looked like a
+  bare "(command exited with status 1)". All three now print why before
+  exiting.
+- 370 tests (+9 regressions), bandit clean.
+
 * Fri Jul 31 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.12-1
 - Fix: `write_user_config()` only wrote a setting change to disk, never to
   the in-memory `Config` object -- a long-lived caller (the interactive
