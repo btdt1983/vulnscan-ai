@@ -967,7 +967,6 @@ def cmd_dashboard(cfg: Config, args) -> int:
     if args.enable_fix or args.disable_fix:
         enable = bool(args.enable_fix)
         path = cfg.write_user_config({"dashboard_allow_fix": enable})
-        cfg.dashboard_allow_fix = enable
         if enable:
             print("Apply-fix from the dashboard is now ENABLED.")
             print("WARNING: anyone who can log into the dashboard can now run "

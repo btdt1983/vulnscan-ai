@@ -1048,6 +1048,16 @@ class TestWizardConfig(unittest.TestCase):
                 data = json.load(open(p))
                 self.assertEqual(data["provider"], "local")
                 self.assertEqual(data["model"], "m2")
+                # Regression: a long-lived caller (the interactive menu holds
+                # ONE Config for its whole session, never reloading from
+                # disk) must see the change immediately on the SAME object,
+                # not just on a future Config.load().
+                self.assertEqual(c.provider, "local")
+                self.assertEqual(c.model, "m2")
+                # A key that isn't a real dataclass field must not crash or
+                # get silently set as a stray attribute.
+                c.write_user_config({"not_a_real_field": "x"})
+                self.assertFalse(hasattr(c, "not_a_real_field"))
             finally:
                 if old is not None:
                     os.environ["HOME"] = old
@@ -1104,6 +1114,33 @@ class TestWizardConfig(unittest.TestCase):
                 if old is not None:
                     os.environ["HOME"] = old
 
+    def test_cmd_network_add_updates_in_memory_cfg_for_menu_session(self):
+        # Regression: run_menu() holds ONE cfg object for the whole
+        # interactive session and never reloads it from disk (see
+        # menu.run_menu / menu._run_command) -- cmd_network must mutate cfg
+        # in memory too (like cmd_dashboard's --enable-fix branch already
+        # does for dashboard_allow_fix), or the very next menu screen in the
+        # same session still shows "no targets configured" right after a
+        # successful --add.
+        from vulnscanai.config import Config
+        from vulnscanai.cli import build_parser, cmd_network
+        old = os.environ.get("HOME")
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["HOME"] = d
+            try:
+                p = build_parser()
+                c = Config()
+                self.assertEqual(c.network_targets, [])
+                cmd_network(c, p.parse_args(["network", "--add", "192.168.0.0/24"]))
+                self.assertEqual(c.network_targets, ["192.168.0.0/24"])
+                cmd_network(c, p.parse_args(["network", "--remove", "192.168.0.0/24"]))
+                self.assertEqual(c.network_targets, [])
+                cmd_network(c, p.parse_args(["network", "--ports", "top1000"]))
+                self.assertEqual(c.network_scan_ports, "top1000")
+            finally:
+                if old is not None:
+                    os.environ["HOME"] = old
+
     def test_cmd_network_bare_lists_state(self):
         from vulnscanai.config import Config
         from vulnscanai.cli import build_parser, cmd_network
@@ -1147,8 +1184,9 @@ class TestWizardConfig(unittest.TestCase):
         orig_home = os.environ.get("HOME")
         W._ask = lambda prompt="": next(answers, "")
         os.environ["HOME"] = home
+        cfg = Config()
         try:
-            W._configure_network_targets(Config())
+            W._configure_network_targets(cfg)
             saved = json.load(open(os.path.join(
                 home, ".config", "vulnscan-ai", "config.json")))
         finally:
@@ -1156,6 +1194,10 @@ class TestWizardConfig(unittest.TestCase):
             if orig_home is not None:
                 os.environ["HOME"] = orig_home
         self.assertEqual(saved["network_targets"], ["10.0.0.5", "2001:db8::1"])
+        # Regression: the SAME cfg object (as run_menu's setup entry passes
+        # through) must reflect the new targets immediately -- see
+        # write_user_config's in-memory sync.
+        self.assertEqual(cfg.network_targets, ["10.0.0.5", "2001:db8::1"])
 
     def test_configure_network_targets_declined_no_write(self):
         import vulnscanai.wizard as W

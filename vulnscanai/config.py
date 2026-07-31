@@ -146,7 +146,15 @@ class Config:
         return os.path.expanduser("~/.config/vulnscan-ai/config.json")
 
     def write_user_config(self, updates: Dict[str, Any]) -> str:
-        """Merge `updates` into the per-user config file and return its path."""
+        """Merge `updates` into the per-user config file, apply them to this
+        Config instance in memory too, and return the file's path.
+
+        The in-memory sync matters because a caller can be long-lived (the
+        interactive menu holds ONE Config for its whole session and never
+        reloads from disk) -- without it, a value saved via this method
+        wouldn't show up until the process restarts, even though the file on
+        disk is already correct.
+        """
         path = self.user_config_path()
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         data: Dict[str, Any] = {}
@@ -164,6 +172,9 @@ class Config:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
         os.chmod(path, 0o600)
+        for k, v in updates.items():
+            if k in self.__dataclass_fields__:
+                setattr(self, k, v)
         return path
 
     def _apply_env(self) -> None:
