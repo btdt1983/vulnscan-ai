@@ -110,6 +110,14 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 | `--scanner NAME` | Scanner to run; repeatable. `dnf` (RHSA/updateinfo), `oscap` (OpenSCAP/OVAL), `ssh` (sshd hardening), `systemd` (service sandboxing), `ports` (network exposure), `webroot` (exposed files in web document roots), `container` (Podman/Docker runtime hardening), `effective` (reboot/restart still pending after a patch), `fips` (FIPS-mode & crypto-policy posture), `network` (remote nmap exposure check against an authorized target allow-list). Default: from config (`dnf`). |
 | `--all` | Run **every** available scanner (overrides `--scanner`). Unavailable ones are skipped. |
 
+> **Scanning a subset never discards the rest.** A scan that covers fewer
+> than every scanner (the configured default, or an explicit `--scanner`)
+> keeps any previously-saved finding whose source wasn't part of *this* run
+> — only `--all` (or a `--scanner` list that happens to cover every scanner)
+> fully replaces the saved set. So e.g. `scan --scanner network` to check
+> just remote exposure never wipes out yesterday's `dnf`/`oscap`/`ssh`
+> findings from `findings.json`.
+
 > **`systemd` scanner.** Wraps `systemd-analyze security`. Conservative by
 > default: only `UNSAFE` units at/above exposure `9.0`, excluding un-hardenable/
 > internal units (getty, emergency, `systemd-*`, …) and units that aren't
@@ -661,9 +669,9 @@ Also serves `GET /api/findings.json` (authenticated). Run it as a service with
 **actively-exploited (CISA KEV)** tile and an **EPSS ≥50%** tile whenever a
 finding matches — the highest-priority signals up front.
 
-**Actions in the UI.** A **Scan now** button runs the configured scanners in the
-background; per-finding **Preview fix** shows the AI's proposed plan (dry-run, no
-execution). **Apply fix** runs the fix transactionally on the host and is **off
+**Actions in the UI.** A **Scan now** button runs every available scanner (like
+`scan --all`, not just the configured default) in the background; per-finding
+**Preview fix** shows the AI's proposed plan (dry-run, no execution). **Apply fix** runs the fix transactionally on the host and is **off
 by default** — run `vulnscan-ai dashboard --enable-fix` (or set
 `"dashboard_allow_fix": true` in the config, or use the interactive menu's *Web
 dashboard → Enable applying fixes* entry) to make the Apply button appear (login

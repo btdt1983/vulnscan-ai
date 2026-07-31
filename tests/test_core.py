@@ -1237,6 +1237,128 @@ class TestScanDiff(unittest.TestCase):
         self.assertEqual(resolved, [])
 
 
+class TestScanSaveAndFixRegressions(unittest.TestCase):
+    """Regression: a scan covering only SOME scanners (the configured
+    default, an explicit --scanner, or the dashboard's old cfg.scanners-only
+    behavior) used to fully overwrite findings.json, silently discarding
+    every other scanner's last results -- concretely, probing just the
+    `network` scanner (a legitimate narrow check) wiped out real
+    dnf/oscap/ssh findings. `_save_findings` itself is still a full
+    overwrite; `_merge_with_previous` runs before it to carry forward
+    anything a partial run didn't touch."""
+
+    def test_partial_scan_preserves_other_sources(self):
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cli._save_findings(cfg, [
+            _finding(source="dnf", package="bash", cve_ids=["CVE-2026-0001"]),
+            _finding(source="ssh", title="root login", package=None, cve_ids=[]),
+        ])
+        # A network-only scan found nothing this time.
+        merged = cli._merge_with_previous(cfg, [], ["network"])
+        self.assertEqual({f.source for f in merged}, {"dnf", "ssh"})
+
+    def test_run_covering_every_scanner_does_not_carry_over(self):
+        from vulnscanai import cli
+        from vulnscanai.scanners import SCANNERS
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        cli._save_findings(cfg, [_finding(source="dnf", package="bash")])
+        merged = cli._merge_with_previous(cfg, [], list(SCANNERS))
+        self.assertEqual(merged, [])
+
+    def test_sources_that_ran_this_time_are_not_carried_over_stale(self):
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        old = _finding(source="network", target="10.0.0.5", title="ftp exposed")
+        cli._save_findings(cfg, [old])
+        new = [_finding(source="network", target="10.0.0.6", title="telnet exposed")]
+        # "network" WAS part of this run, so its OWN previous findings are
+        # superseded (the old 10.0.0.5 finding must not linger forever).
+        merged = cli._merge_with_previous(cfg, new, ["network"])
+        self.assertEqual(merged, new)
+
+    def test_no_previous_file_is_a_noop(self):
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        new = [_finding(source="dnf", package="bash")]
+        self.assertEqual(cli._merge_with_previous(cfg, new, ["dnf"]), new)
+
+    def test_cmd_scan_scanner_network_only_preserves_prior_full_scan(self):
+        # End-to-end regression for the exact reported scenario: a full
+        # scan saves real findings, then `scan --scanner network` (0
+        # findings) must not wipe them from findings.json.
+        import types
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d, scanners=["dnf"])
+        cfg.patched_filter = False
+        cfg.service_state_filter = False
+        cli._save_findings(cfg, [
+            _finding(source="oscap", package="kernel", advisory="ALSA-2026:1",
+                    cve_ids=["CVE-2026-0001"]),
+            _finding(source="ssh", title="root login", package=None, cve_ids=[]),
+        ])
+        args = types.SimpleNamespace(
+            list_profiles=False, compliance=None, scanner=["network"], all=False,
+            no_enrich=True, min_severity=None, ignore=None, pdf=None, json=None,
+            sarif=None)
+        buf = io.StringIO()
+        import contextlib
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = cli.cmd_scan(cfg, args)
+        self.assertEqual(rc, 0)
+        saved = cli._load_findings_silent(cfg)
+        self.assertEqual({f.source for f in saved}, {"oscap", "ssh"})
+
+    def test_cmd_rollback_no_findings_explains(self):
+        import contextlib, types
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        args = types.SimpleNamespace(list=False, id=None)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = cli.cmd_rollback(cfg, args)
+        self.assertEqual(rc, 1)
+        self.assertIn("No findings to roll back", buf.getvalue())
+
+    def test_cmd_report_no_findings_explains(self):
+        import contextlib, types
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        args = types.SimpleNamespace(min_severity=None, output="out.pdf")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = cli.cmd_report(cfg, args)
+        self.assertEqual(rc, 1)
+        self.assertIn("No findings to report", buf.getvalue())
+
+    def test_dashboard_scan_runs_every_scanner_not_just_configured_default(self):
+        # Regression: the dashboard's "Scan now" only ran cfg.scanners
+        # (default just ["dnf"]), so it could silently show far fewer
+        # findings than a real `scan --all` -- confusing when other
+        # scanners (oscap/ssh/systemd/...) had real findings.
+        from unittest import mock
+        from vulnscanai import dashboard as D
+        from vulnscanai.scanners import SCANNERS
+
+        class _Srv:
+            cfg = Config(scanners=["dnf"])  # deliberately narrow default
+            scan_running = True
+            scan_message = ""
+
+        with mock.patch("vulnscanai.cli.do_scan", return_value=[]) as m_scan, \
+             mock.patch("vulnscanai.cli._save_findings"):
+            D._run_scan(_Srv())
+        ran_scanners = m_scan.call_args[0][1]
+        self.assertEqual(set(ran_scanners), set(SCANNERS))
+
+
 class _TTY(io.StringIO):
     def isatty(self):
         return True
@@ -3555,6 +3677,25 @@ class TestOfflineCatalog(unittest.TestCase):
         finally:
             cli.get_provider = orig
         self.assertEqual(rc, 2)
+
+    def test_cmd_fix_no_findings_explains_before_returning_1(self):
+        # Regression: `if not findings: return 1` used to exit silently --
+        # in the interactive menu that showed only "(command exited with
+        # status 1)" with no clue why.
+        import io, contextlib, types
+        from vulnscanai import cli
+        d = tempfile.mkdtemp()
+        cfg = Config(state_dir=d)
+        args = types.SimpleNamespace(
+            scan=False, scanner=None, all=False, no_enrich=True, min_severity=None,
+            provider=None, model=None, export_script=None, export_ansible=None,
+            dry_run=True, yes=True, pdf=None, ignore=None,
+            offline=False, no_catalog=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = cli.cmd_fix(cfg, args)
+        self.assertEqual(rc, 1)
+        self.assertIn("Nothing to fix", buf.getvalue())
 
     def test_catalog_plan_exports_to_bash(self):
         from vulnscanai import catalog

@@ -995,11 +995,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 
 def _run_scan(srv) -> None:
-    """Background full scan: runs the configured scanners and saves findings."""
+    """Background full scan: runs EVERY registered scanner (unavailable ones
+    are skipped, same as CLI `--all`) and saves findings.
+
+    Deliberately not `cfg.scanners` (the CLI's configurable default, often
+    just `["dnf"]`) -- a dashboard "Scan now" click is a UI action with no
+    equivalent of `--scanner`/`--all` to choose from, so it must mean "give
+    me the full picture", not silently scan only the configured subset.
+    """
     cfg = srv.cfg
     try:
         from .cli import _filter_severity, _save_findings, do_scan
-        findings = do_scan(cfg, cfg.scanners, enrich=cfg.enrich)
+        from .scanners import SCANNERS
+        findings = do_scan(cfg, list(SCANNERS), enrich=cfg.enrich)
         findings = _filter_severity(findings, cfg.min_severity)
         _save_findings(cfg, findings)
         srv.scan_message = f"Scan complete: {len(findings)} finding(s)."

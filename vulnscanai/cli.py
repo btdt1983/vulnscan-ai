@@ -251,6 +251,34 @@ def _save_findings(cfg: Config, findings: List[Finding]) -> None:
     os.chmod(cfg.findings_path, 0o600)
 
 
+def _merge_with_previous(cfg: Config, findings: List[Finding],
+                         scanners: List[str],
+                         previous: Optional[List[Finding]] = None) -> List[Finding]:
+    """Before a scan's results overwrite the saved findings, keep any
+    PREVIOUSLY saved finding whose source wasn't part of THIS run.
+
+    A scan that only covers a subset of scanners -- the configured default,
+    an explicit --scanner, or the dashboard's background scan -- must not
+    silently erase a prior broader scan's results for every other scanner.
+    (Concretely: probing the `network` scanner alone, a legitimate narrow
+    check, used to wipe out real dnf/oscap/ssh findings from the last full
+    scan, since saving was always a full overwrite.) `--all` (or any run
+    that covers every registered scanner) is unaffected -- there is nothing
+    to carry over.
+    """
+    if set(scanners) >= set(SCANNERS):
+        return findings
+    if previous is None:
+        previous = (_load_findings_silent(cfg)
+                    if os.path.isfile(cfg.findings_path) else [])
+    carried = [f for f in previous if f.source not in scanners]
+    if not carried:
+        return findings
+    _eprint(f"  i {len(carried)} finding(s) from a scanner not run this time "
+            f"carried over unchanged from the last saved scan")
+    return dedup_cross_scanner(merge_findings(findings + carried))
+
+
 def _load_findings(cfg: Config) -> List[Finding]:
     if not os.path.isfile(cfg.findings_path):
         _eprint(f"No saved findings at {cfg.findings_path}. Run 'scan' first.")
@@ -478,6 +506,7 @@ def cmd_scan(cfg: Config, args) -> int:
     findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich,
                        extra_ignores=args.ignore)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
+    findings = _merge_with_previous(cfg, findings, scanners, previous=previous)
     _save_findings(cfg, findings)
     print()
     _print_findings(findings)
@@ -561,9 +590,11 @@ def _print_step(r: dict) -> None:
 def cmd_fix(cfg: Config, args) -> int:
     if args.scan:
         print(f"Scanning {_hostname()} ...")
-        findings = do_scan(cfg, _select_scanners(args, cfg),
+        scanners = _select_scanners(args, cfg)
+        findings = do_scan(cfg, scanners,
                            enrich=not args.no_enrich and cfg.enrich,
                            extra_ignores=getattr(args, "ignore", None))
+        findings = _merge_with_previous(cfg, findings, scanners)
     else:
         findings = _load_findings(cfg)
         # The saved findings may predate a patch (or this filter): re-check so we
@@ -578,6 +609,8 @@ def cmd_fix(cfg: Config, args) -> int:
                     _eprint(f"  - {patched} already-patched finding(s) skipped "
                             f"(no installable update)")
     if not findings:
+        print("Nothing to fix — no actionable findings "
+              "(run 'scan' first, or check --min-severity/the baseline).")
         return 1
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
 
@@ -746,6 +779,7 @@ def cmd_fix(cfg: Config, args) -> int:
 def cmd_rollback(cfg: Config, args) -> int:
     findings = _load_findings(cfg)
     if not findings:
+        print("No findings to roll back.")
         return 1
     restorable = [f for f in findings
                   if f.remediation and f.remediation.backup_dir]
@@ -813,6 +847,7 @@ def cmd_audit(cfg: Config, args) -> int:
 def cmd_report(cfg: Config, args) -> int:
     findings = _load_findings(cfg)
     if not findings:
+        print("No findings to report.")
         return 1
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
     out = write_report(findings, args.output, _hostname(), _now())
@@ -850,6 +885,7 @@ def cmd_scheduled(cfg: Config, args) -> int:
     previous = _load_findings_silent(cfg)
     findings = do_scan(cfg, scanners, enrich=not args.no_enrich and cfg.enrich)
     findings = _filter_severity(findings, args.min_severity or cfg.min_severity)
+    findings = _merge_with_previous(cfg, findings, scanners, previous=previous)
     added, resolved = diff_findings(previous, findings)
     _save_findings(cfg, findings)
     print(f"  drift: {len(added)} new, {len(resolved)} resolved since last scan")

@@ -535,8 +535,8 @@ overridable.
   **actively-exploited (CISA KEV)** tile and an **EPSS ≥50%** tile when any
   finding matches — the exploitation signals surface up front, not buried in the
   list.
-- **Scan now** (header button) runs the configured scanners in the background
-  and refreshes the page when done.
+- **Scan now** (header button) runs every available scanner (like `scan
+  --all`) in the background and refreshes the page when done.
 - **Preview fix** (per finding) asks the AI for a remediation and shows the
   plan — a dry-run, nothing is executed. Needs an AI provider configured.
 - **Apply fix** actually runs the fix on the host (transactional, with
