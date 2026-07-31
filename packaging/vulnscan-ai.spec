@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.11
+Version:        0.4.12
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,18 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Jul 31 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.12-1
+- Fix: `write_user_config()` only wrote a setting change to disk, never to
+  the in-memory `Config` object -- a long-lived caller (the interactive
+  menu holds ONE `Config` for its whole session, never reloading from disk)
+  didn't see the change until restarted. Real-world symptom: adding a
+  target via `vulnscan-ai network --add` (CLI or the menu's Network scan ->
+  Add) saved correctly, but the very next menu screen in the same session
+  still showed "no targets configured" and a scan run from there found the
+  scanner unavailable. Fixed at the root in `write_user_config()` itself
+  (applies the update to `self` too), which also fixes the same
+  pre-existing bug in `dashboard --allow`/`--deny`/`--set-password`.
+
 * Thu Jul 30 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.11-1
 - Network scanner v2: authorize targets without hand-editing config.json
   (`vulnscan-ai network --add/--remove/--list/--ports`, plus a setup-wizard
