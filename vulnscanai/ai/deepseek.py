@@ -3,9 +3,10 @@
 """DeepSeek provider (optional).
 
 DeepSeek exposes an OpenAI-compatible Chat Completions API. Set DEEPSEEK_API_KEY.
-The default model is the code-specialised 'deepseek-coder'; use 'deepseek-chat'
-(general) or 'deepseek-reasoner' via --model / OLLAMA-style overrides as needed.
-Point DEEPSEEK_BASE_URL at a gateway if you don't hit the public endpoint.
+The default model is the cheaper 'deepseek-v4-flash'; use 'deepseek-v4-pro' via
+--model for harder fixes. (The old 'deepseek-coder' / 'deepseek-chat' ids were
+retired with the V4 launch.) Point DEEPSEEK_BASE_URL at a gateway if you don't
+hit the public endpoint.
 """
 
 from __future__ import annotations
@@ -18,8 +19,11 @@ from .base import AIProvider, ProviderError
 
 class DeepSeekProvider(AIProvider):
     name = "deepseek"
-    default_model = "deepseek-coder"
-    known_models = ["deepseek-coder", "deepseek-chat"]
+    default_model = "deepseek-v4-flash"
+    known_models = [
+        "deepseek-v4-flash",              # cheaper default
+        "deepseek-v4-pro",                # stronger
+    ]
     api_key_env = "DEEPSEEK_API_KEY"
 
     @property

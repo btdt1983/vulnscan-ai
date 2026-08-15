@@ -3,9 +3,10 @@
 """Mistral AI provider (optional).
 
 Mistral exposes an OpenAI-compatible Chat Completions API. Set MISTRAL_API_KEY.
-The default model is the open-weights 'open-mixtral-8x7b'; other ids such as
-'mistral-large-latest', 'mistral-small-latest' or 'open-mistral-7b' work via
---model. Point MISTRAL_BASE_URL at a gateway to override the endpoint.
+The default model is the open-weights 'mistral-small-4'; 'mistral-medium-3-5',
+'mistral-large-3' and the code-specialised 'codestral-2508' work via --model.
+(The old 'open-mixtral-8x7b' default was retired in March 2025.) Point
+MISTRAL_BASE_URL at a gateway to override the endpoint.
 """
 
 from __future__ import annotations
@@ -18,8 +19,13 @@ from .base import AIProvider, ProviderError
 
 class MistralProvider(AIProvider):
     name = "mistral"
-    default_model = "open-mixtral-8x7b"
-    known_models = ["open-mixtral-8x7b", "mistral-small-latest", "mistral-large-latest"]
+    default_model = "mistral-small-4"
+    known_models = [
+        "mistral-small-4",                # open-weights default
+        "mistral-medium-3-5",             # stronger general model
+        "mistral-large-3",                # flagship
+        "codestral-2508",                 # code-specialised
+    ]
     api_key_env = "MISTRAL_API_KEY"
 
     @property

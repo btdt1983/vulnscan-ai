@@ -37,7 +37,7 @@ Override the state/cache directory (findings and reports).
 AI provider: \fBclaude\fR, \fBopenai\fR, \fBgemini\fR, \fBkimi\fR, \fBdeepseek\fR, \fBmistral\fR, or \fBlocal\fR.
 .TP
 .BI \-\-model " MODEL"
-Model id override, e.g. \fIclaude-opus-4-8\fR or \fIllama3.2:1b\fR.
+Model id override, e.g. \fIclaude-opus-5\fR or \fIllama3.2:1b\fR.
 .TP
 .BI \-\-effort " LEVEL"
 Claude reasoning effort: \fBlow\fR, \fBmedium\fR, \fBhigh\fR, \fBxhigh\fR, or \fBmax\fR. Turns on adaptive thinking; other providers ignore it.
@@ -169,7 +169,14 @@ No options.
 Interactive first-run wizard: detect GPU/RAM, list offline models sized to the
 host, optionally install Ollama, download the chosen model, and save it as the
 default provider/model. Offered automatically on the first interactive run;
-suppress with \fBVULNSCANAI_NO_SETUP=1\fR. No options.
+suppress with \fBVULNSCANAI_NO_SETUP=1\fR.
+.TP
+.B \-\-update
+Skip the wizard and re-pull every Ollama model already downloaded, so a
+re-published tag is picked up; only changed layers are fetched. Ollama never
+refreshes a model on its own. This cannot cross model generations
+(\fIqwen2.5\fR to \fIqwen3\fR is a different model, not a newer version), so any
+model that has dropped off the curated recommendation list is reported too.
 .SS update\-oval
 Detect the distribution and download/stage the OpenSCAP OVAL CVE feed under
 \fI<state-dir>/oval/\fR, enabling the \fBoscap\fR scanner. No options. You rarely

@@ -16,8 +16,12 @@ from .base import AIProvider, ProviderError
 
 class OpenAIProvider(AIProvider):
     name = "openai"
-    default_model = "gpt-4o"
-    known_models = ["gpt-4o", "gpt-4o-mini"]
+    default_model = "gpt-5.6-terra"
+    known_models = [
+        "gpt-5.6-terra",                  # balanced default
+        "gpt-5.6-sol",                    # frontier / hardest fixes
+        "gpt-5.6-luna",                   # cheapest
+    ]
     api_key_env = "OPENAI_API_KEY"
 
     @property
@@ -28,13 +32,17 @@ class OpenAIProvider(AIProvider):
     def complete(self, system: str, user: str) -> str:
         if not self.api_key:
             raise ProviderError("OPENAI_API_KEY is not set")
+        # No "temperature": the GPT-5 reasoning models reject any value other
+        # than the default with a 400 ("does not support 0.1 with this model"),
+        # which would break every remediation. They are deterministic enough for
+        # JSON output without it, and an OpenAI-compatible gateway pointed at an
+        # older model is happy with the default too.
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0.1,
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         try:

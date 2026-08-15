@@ -618,6 +618,7 @@ _TOP: List[Tuple[str, str]] = [
     ("Web dashboard", "dashboard"),
     ("Scheduled scan (non-interactive)", "scheduled"),
     ("Update the OVAL security feed", "update-oval"),
+    ("Update the local AI models (Ollama re-pull)", "setup-update"),
     ("Setup wizard", "setup"),
 ]
 
@@ -636,6 +637,7 @@ _BUILDERS = {
     "scheduled": _b_scheduled,
     "update-oval": _b_update_oval,
     "setup": lambda cfg: ["setup"],
+    "setup-update": lambda cfg: ["setup", "--update"],
 }
 
 

@@ -15,13 +15,13 @@ from .base import AIProvider, ProviderError
 class ClaudeProvider(AIProvider):
     name = "claude"
     # Sonnet is the cost-effective default for iterating over many CVEs;
-    # pass --model claude-opus-4-8 for the most capable model.
-    default_model = "claude-sonnet-4-6"
+    # pass --model claude-opus-5 for deeper reasoning on hard fixes.
+    default_model = "claude-sonnet-5"
     known_models = [
-        "claude-sonnet-4-6",              # balanced default
-        "claude-opus-4-8",                # most capable
-        "claude-haiku-4-5-20251001",      # fastest / cheapest
-        "claude-fable-5",
+        "claude-sonnet-5",                # balanced default
+        "claude-opus-5",                  # deeper reasoning / agentic
+        "claude-haiku-4-5",               # fastest / cheapest
+        "claude-fable-5",                 # most capable, highest cost
     ]
     api_key_env = "ANTHROPIC_API_KEY"
     endpoint = "https://api.anthropic.com/v1/messages"
@@ -32,16 +32,19 @@ class ClaudeProvider(AIProvider):
             raise ProviderError("ANTHROPIC_API_KEY is not set")
         payload = {
             "model": self.model,
-            "max_tokens": 2048,
+            # The 5-series models think by default even when no "thinking" key is
+            # sent, and max_tokens caps thinking AND answer together — a tight cap
+            # truncates the JSON plan mid-object. Keep the headroom generous; this
+            # is a ceiling, not a spend.
+            "max_tokens": 8000,
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
-        # Reasoning effort (low|medium|high|xhigh|max) turns on adaptive thinking;
-        # give the answer more room so thinking tokens don't crowd out the JSON.
-        # output_config.effort is GA (no beta header); thinking blocks are skipped
-        # below because we only read type=="text" parts.
+        # Reasoning effort (low|medium|high|xhigh|max) pins adaptive thinking on
+        # explicitly and controls how deep it goes. output_config.effort is GA (no
+        # beta header); thinking blocks are skipped below because we only read
+        # type=="text" parts.
         if self.effort:
-            payload["max_tokens"] = 8000
             payload["thinking"] = {"type": "adaptive"}
             payload["output_config"] = {"effort": self.effort}
         headers = {
@@ -56,5 +59,14 @@ class ClaudeProvider(AIProvider):
         parts = data.get("content", [])
         text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
         if not text:
+            # The 5-series models run safety classifiers that decline a request
+            # with a normal HTTP 200 and empty content. A finding's own wording
+            # ("exploit", "privilege escalation") can trip the cyber category, so
+            # name the reason instead of reporting a bare empty response.
+            if data.get("stop_reason") == "refusal":
+                cat = (data.get("stop_details") or {}).get("category") or "unspecified"
+                raise ProviderError(
+                    f"Claude declined this request (category: {cat}) — retry with "
+                    "another model or provider for this finding")
             raise ProviderError("empty response from Claude")
         return text

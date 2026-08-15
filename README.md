@@ -101,12 +101,12 @@ export NVD_API_KEY=...                   # optional, higher NVD rate limit
 
 DeepSeek and Mistral both speak the OpenAI Chat Completions API; override the
 endpoint with `DEEPSEEK_BASE_URL` / `MISTRAL_BASE_URL` and the model with
-`--model` (e.g. `deepseek-chat`, `mistral-large-latest`). **StarCoder 2** has no
+`--model` (e.g. `deepseek-v4-pro`, `mistral-large-3`). **StarCoder 2** has no
 hosted API — run it offline through the `local` provider:
 `vulnscan-ai --provider local --model starcoder2 fix` (after `ollama pull starcoder2`).
 
 **Model and reasoning effort.** Pick the model with `--model` (or the `model`
-config), e.g. `--model claude-opus-4-8` for the most capable Claude. For Claude
+config), e.g. `--model claude-opus-5` for deeper reasoning on hard fixes. For Claude
 you can also dial the **reasoning effort** with `--effort low|medium|high|xhigh|max`
 (config `claude_effort`, env `VULNSCANAI_CLAUDE_EFFORT`) — it turns on adaptive
 thinking, so the model reasons harder on tricky fixes. Use `max` when correctness
@@ -153,7 +153,7 @@ vulnscan-ai setup
  vulnscan-ai setup — offline AI model
  Detected RAM: 7.3 GB total, 2.0 GB available.
    #  model            download   needs RAM   notes
-   1  qwen2.5:0.5b       0.4 GB        fits  tiny & fastest (recommended)
+   1  qwen3:0.6b         0.5 GB        fits  tiny & fastest (recommended)
    2  llama3.2:1b        1.3 GB  tight/swap  good balance, CPU-friendly
    3  llama3.2:3b        2.0 GB  tight/swap  better quality
    ...
@@ -178,6 +178,20 @@ ollama pull llama3.2:1b
 vulnscan-ai providers            # 'local' shows 'ready' when the server answers
 vulnscan-ai --provider local --model llama3.2:1b fix --min-severity important
 ```
+
+**Keeping the local model current.** Ollama never refreshes a model on its own —
+once pulled, it runs whatever sits on disk forever. Two different things can be
+"newer", and only one of them is a re-pull:
+
+```bash
+vulnscan-ai setup --update       # re-pull what you have (picks up a moved tag)
+vulnscan-ai setup                # switch generation, e.g. qwen2.5 -> qwen3
+```
+
+`--update` fetches only the changed layers and reports per model whether the tag
+actually moved. It cannot cross generations: `qwen2.5` and `qwen3` are different
+models, not two versions of one, so it also lists anything that has dropped off
+the recommended list. `vulnscan-ai info` reports the same under AI providers.
 
 The tool asks Ollama for JSON-constrained output, so even small models return
 parseable remediation plans. Disabling enrichment (`--no-enrich`) makes a scan
@@ -210,8 +224,8 @@ vulnscan-ai fix
 vulnscan-ai fix --scan --dry-run --pdf plan.pdf
 
 # Use a different provider/model
-vulnscan-ai --provider openai --model gpt-4o fix
-vulnscan-ai --provider claude --model claude-opus-4-8 fix
+vulnscan-ai --provider openai --model gpt-5.6-sol fix
+vulnscan-ai --provider claude --model claude-opus-5 fix
 
 # Non-interactive (CI): auto-approve every screened fix
 vulnscan-ai fix --yes

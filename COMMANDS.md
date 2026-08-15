@@ -41,14 +41,14 @@ These go **before** the command.
 | `--config CONFIG` | Path to a config JSON (overrides the default search) |
 | `--state-dir STATE_DIR` | Override the state/cache directory |
 | `--provider PROVIDER` | AI provider: `claude` \| `openai` \| `gemini` \| `kimi` \| `deepseek` \| `mistral` \| `local` |
-| `--model MODEL` | Model id override (e.g. `claude-opus-4-8`, `llama3.2:1b`) |
+| `--model MODEL` | Model id override (e.g. `claude-opus-5`, `llama3.2:1b`) |
 | `--effort LEVEL` | Claude reasoning effort: `low` \| `medium` \| `high` \| `xhigh` \| `max`. Turns on adaptive thinking; other providers ignore it. |
 
 ```bash
 vulnscan-ai --provider local --model llama3.2:1b fix
 vulnscan-ai --config /etc/vulnscan-ai/config.json scan
-# Claude, most capable model, maximum reasoning effort for the hardest fixes
-vulnscan-ai --provider claude --model claude-opus-4-8 --effort max fix --dry-run
+# Claude, deeper-reasoning model, maximum reasoning effort for the hardest fixes
+vulnscan-ai --provider claude --model claude-opus-5 --effort max fix --dry-run
 ```
 
 ### Severity values
@@ -425,8 +425,8 @@ vulnscan-ai fix --yes
 # Offline AI (local model), dry-run
 vulnscan-ai --provider local --model llama3.2:1b fix --dry-run
 
-# Use Claude's most capable model for higher-quality plans
-vulnscan-ai --provider claude --model claude-opus-4-8 fix --min-severity important
+# Use Claude's deeper-reasoning model for higher-quality plans
+vulnscan-ai --provider claude --model claude-opus-5 fix --min-severity important
 
 # Don't apply — generate a bash script and an Ansible playbook to review/run later
 vulnscan-ai fix --export-script fix.sh --export-ansible fix.yml
@@ -564,8 +564,23 @@ model download is deferred or you're offline and the model is already present.
 
 ```bash
 vulnscan-ai setup
+vulnscan-ai setup --update      # skip the wizard, refresh the local models
 ```
-No options. Suppress the auto-prompt with `VULNSCANAI_NO_SETUP=1`.
+
+| Option | Meaning |
+| --- | --- |
+| `--update` | Skip the wizard and re-pull every Ollama model already downloaded |
+
+Suppress the auto-prompt with `VULNSCANAI_NO_SETUP=1`.
+
+**`--update` — keeping a local model current.** Ollama never refreshes a model
+on its own: once pulled it runs whatever sits on disk forever. `--update`
+re-pulls each downloaded model, which fetches only the changed layers, and then
+reports per model whether the tag actually moved. It **cannot cross
+generations** — `qwen2.5` → `qwen3` is a different model, not a newer version of
+the same one — so it also lists any model that is no longer on the curated
+recommendation list and points you at `vulnscan-ai setup` to switch. `info`
+reports the same thing under the AI-providers block.
 
 > An API key is **not** a Claude Pro / ChatGPT Plus subscription — create a
 > developer key (with billing) at the provider's console. A real `*_API_KEY`

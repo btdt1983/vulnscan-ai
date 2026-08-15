@@ -10,8 +10,12 @@ from .base import AIProvider, ProviderError
 
 class GeminiProvider(AIProvider):
     name = "gemini"
-    default_model = "gemini-2.0-flash"
-    known_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]
+    default_model = "gemini-2.5-flash"
+    known_models = [
+        "gemini-2.5-flash",               # balanced default
+        "gemini-3.7-flash",               # newest, strongest on code
+        "gemini-2.5-pro",                 # deeper reasoning
+    ]
     api_key_env = "GEMINI_API_KEY"
 
     def complete(self, system: str, user: str) -> str:

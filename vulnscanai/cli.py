@@ -387,8 +387,38 @@ def cmd_info(cfg: Config, args) -> int:
         flag = "ready" if inst.available() else "needs config"
         key = cls.api_key_env or "(no key)"
         print(f"  {name:<8} {flag:<12} model={inst.default_model} env={key}")
+    _local_model_hint(cfg)
     print(f"\nState dir: {cfg.state_dir}")
     return 0
+
+
+def _local_model_hint(cfg: Config) -> None:
+    """Report the local model's real state under the provider list.
+
+    Ollama never self-updates, so a model pulled once silently stays on that
+    generation forever — nothing else in the tool would ever say so.
+    """
+    from . import wizard as W
+    from .ai.local import LocalProvider
+
+    selected = getattr(cfg, "provider", "") == "local"
+    model = getattr(cfg, "model", "") if selected else ""
+    prov = LocalProvider(model=model or None)
+    if not prov.available():
+        return                      # no Ollama server answering; nothing to say
+    installed = W.installed_models()
+    if selected:
+        # The provider row above prints the class default, which is not
+        # necessarily the model this host actually runs.
+        state = ("downloaded" if prov.model in installed
+                 else f"NOT downloaded — run: ollama pull {prov.model}")
+        print(f"           local model in use: {prov.model} ({state})")
+    stale = W.off_curated_list(installed)
+    if stale:
+        print(f"           downloaded but off the recommended list: "
+              f"{', '.join(sorted(stale))}")
+        print("           refresh a moved tag with 'vulnscan-ai setup --update'; "
+              "switch generation with 'vulnscan-ai setup'")
 
 
 # --------------------------------------------------------------------------- #
@@ -964,7 +994,9 @@ def cmd_update_oval(cfg: Config, args) -> int:
 
 
 def cmd_setup(cfg: Config, args) -> int:
-    from .wizard import run_setup
+    from .wizard import run_setup, update_models
+    if getattr(args, "update", False):
+        return update_models()
     return run_setup(cfg, force=True)
 
 
@@ -1245,6 +1277,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "setup", help="interactive first-run wizard: pick an offline AI model")
+    sp.add_argument("--update", action="store_true",
+                    help="skip the wizard: re-pull the local Ollama models "
+                         "already downloaded, picking up a re-published tag")
     sp.set_defaults(func=cmd_setup)
 
     sp = sub.add_parser("update-oval",

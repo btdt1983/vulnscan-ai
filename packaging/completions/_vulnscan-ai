@@ -12,7 +12,7 @@ _vulnscan-ai() {
     'rollback:restore a previously-applied fix from its backup'
     'report:render a report/export from saved findings'
     'providers:list AI providers'
-    'setup:first-run wizard to pick an offline AI model'
+    'setup:first-run wizard to pick an offline AI model (--update re-pulls local models)'
     'update-oval:download the OpenSCAP OVAL feed'
     'scheduled:non-interactive scan + dated report'
     'dashboard:serve saved findings over an HTTPS login dashboard'
@@ -113,6 +113,9 @@ _vulnscan-ai() {
             '*--remove[remove a target]:host/cidr:' \
             '--list[show configured targets and settings, then exit]' \
             '--ports[port-scan breadth]:spec:(known top1000 all)' ;;
+        setup)
+          _arguments \
+            '--update[re-pull the downloaded Ollama models instead of running the wizard]' ;;
         *) _message 'no more arguments' ;;
       esac ;;
   esac

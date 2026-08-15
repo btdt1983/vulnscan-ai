@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.13
+Version:        0.4.14
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,38 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sat Aug 15 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.14-1
+- AI provider model ids refreshed across the board. Four provider defaults
+  had gone dead or were about to: `gemini-2.0-flash` was shut down,
+  `open-mixtral-8x7b` was retired in March 2025, `deepseek-coder` went away
+  with the DeepSeek V4 launch, and the `moonshot-v1-*` series is sunset on
+  2026-08-31. New defaults: claude-sonnet-5, gpt-5.6-terra,
+  gemini-2.5-flash, deepseek-v4-flash, mistral-small-4, kimi-k3. The curated
+  offline (Ollama) menu moves qwen2.5 -> qwen3. Nothing failed loudly
+  before: a retired model id simply made every remediation for that provider
+  fail at runtime.
+- Fix: the Claude provider capped `max_tokens` at 2048 when no `--effort` was
+  given. The Claude 5-series models think by default even when no `thinking`
+  key is sent, and `max_tokens` bounds thinking AND answer together, so the
+  JSON remediation plan could be truncated mid-object. Raised to 8000.
+- Fix: the OpenAI provider always sent `temperature: 0.1`, which the GPT-5
+  reasoning models reject with a 400. That would have broken the provider
+  outright on the new default model. Removed; the sibling OpenAI-compatible
+  providers (deepseek/mistral/kimi) still send it, as their APIs accept it.
+- The Claude provider now reports a classifier refusal (HTTP 200 with empty
+  content) and its category, instead of a bare "empty response from Claude".
+  A finding's own wording can trip the cyber category.
+- New: `setup --update` re-pulls the Ollama models already downloaded, so a
+  re-published tag is picked up; only changed layers are fetched. Ollama
+  never refreshes a model on its own. It reports per model whether the tag
+  actually moved, and — since a re-pull cannot cross model generations —
+  lists any model that has dropped off the curated recommendation list.
+  Also reachable from the interactive menu.
+- `info` now names the local model actually in use (the provider row shows
+  the class default, which is not the same thing), whether it is downloaded,
+  and whether the recommended list has moved past it.
+- CI/release workflows: actions/checkout and actions/upload-artifact v4 -> v7.
+
 * Fri Jul 31 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.13-1
 - Fix: a scan covering only some scanners (the configured default, an
   explicit `--scanner`, or the dashboard's old cfg.scanners-only default)

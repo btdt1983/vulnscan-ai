@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag matches packaged version
         if: github.event_name == 'push'
@@ -68,7 +68,7 @@ jobs:
           test -f /usr/lib/systemd/system/vulnscan-ai.timer
 
       - name: Upload RPM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vulnscan-ai-rpm-${{ matrix.el }}
           path: ~/rpmbuild/RPMS/noarch/*.rpm
@@ -94,7 +94,7 @@ jobs:
       VULNSCANAI_GPG_EMAIL: ${{ vars.SIGNING_EMAIL }}
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag matches packaged version
         run: |

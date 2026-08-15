@@ -16,6 +16,7 @@ import subprocess
 import sys
 from typing import List, Optional
 
+from . import http
 from .ai.local import LocalProvider
 from .hardware import compute_budget_gb, mem_total_gb
 
@@ -23,7 +24,7 @@ from .hardware import compute_budget_gb, mem_total_gb
 # compared against VRAM on a GPU host, or available RAM on a CPU host. The same
 # model runs accelerated automatically when Ollama sees a GPU.
 MODELS = [
-    {"name": "qwen2.5:0.5b", "size": "0.4 GB", "need": 1.0,
+    {"name": "qwen3:0.6b", "size": "0.5 GB", "need": 1.2,
      "note": "tiny & fastest; basic quality"},
     {"name": "llama3.2:1b", "size": "1.3 GB", "need": 2.5,
      "note": "good balance, CPU-friendly"},
@@ -31,13 +32,13 @@ MODELS = [
      "note": "better quality"},
     {"name": "mistral:7b", "size": "4.1 GB", "need": 6.0,
      "note": "strong quality (Apache-2.0)"},
-    {"name": "qwen2.5:7b", "size": "4.7 GB", "need": 6.0,
-     "note": "strong quality"},
     {"name": "llama3.1:8b", "size": "4.9 GB", "need": 7.0,
      "note": "strong general model"},
-    {"name": "qwen2.5:14b", "size": "9.0 GB", "need": 11.0,
+    {"name": "qwen3:8b", "size": "5.2 GB", "need": 7.0,
+     "note": "strong quality"},
+    {"name": "qwen3:14b", "size": "9.3 GB", "need": 11.0,
      "note": "best quality; GPU recommended"},
-    {"name": "qwen2.5:32b", "size": "20 GB", "need": 24.0,
+    {"name": "qwen3:32b", "size": "20 GB", "need": 24.0,
      "note": "top quality; needs a big GPU"},
 ]
 
@@ -79,6 +80,112 @@ def _pull(model: str) -> bool:
     print(f"\nDownloading model '{model}' (progress below)...\n")
     rc = subprocess.run(["ollama", "pull", model], check=False).returncode
     return rc == 0
+
+
+def _tags() -> List[dict]:
+    """Raw /api/tags entries for the models Ollama has on disk.
+
+    Uses the HTTP API rather than parsing `ollama list` columns, so it also
+    works against a remote OLLAMA_HOST and can't break on a layout change.
+    """
+    try:
+        data = http.get_json(f"{LocalProvider().base_url}/api/tags", timeout=10)
+    except http.HttpError:
+        return []
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return []
+    return [m for m in models if isinstance(m, dict)]
+
+
+def installed_models() -> List[str]:
+    """Names of the models Ollama currently has downloaded."""
+    out = []
+    for m in _tags():
+        name = m.get("name") or m.get("model")
+        if isinstance(name, str) and name:
+            out.append(name)
+    return out
+
+
+def _digests() -> dict:
+    """name -> manifest digest, so a re-pull can report what actually moved."""
+    out = {}
+    for m in _tags():
+        name = m.get("name") or m.get("model")
+        digest = m.get("digest")
+        if isinstance(name, str) and isinstance(digest, str):
+            out[name] = digest
+    return out
+
+
+def off_curated_list(installed: List[str]) -> List[str]:
+    """Installed models that are not on the curated MODELS list.
+
+    Deliberately mechanical — it means "the recommendation has moved on", not
+    "this model is broken". A hand-picked model (starcoder2, a fine-tune) lands
+    here too, which is why callers phrase it as information, never a warning.
+    """
+    curated = {m["name"] for m in MODELS}
+    return [n for n in installed if n not in curated]
+
+
+def update_models(names: Optional[List[str]] = None) -> int:
+    """Re-pull the downloaded Ollama models. Returns a process exit code.
+
+    Ollama never refreshes a model on its own: once pulled it runs whatever sits
+    on disk forever. `ollama pull` on a model that is already present fetches
+    only the changed layers, so this is cheap when the tag hasn't moved. It
+    cannot cross generations — qwen2.5 -> qwen3 is a different model, not a
+    newer version of the same one — which is what off_curated_list() reports.
+    """
+    print("=" * 64)
+    print(" vulnscan-ai setup --update — refresh local Ollama models")
+    print("=" * 64)
+    if not _have("ollama"):
+        print("Ollama is not installed — nothing to update.")
+        print("Install it and pick a model with: vulnscan-ai setup")
+        return 1
+    if not _ensure_server():
+        print("The Ollama server doesn't answer on "
+              f"{LocalProvider().base_url}.")
+        print("Start it with: sudo systemctl start ollama   (or: ollama serve)")
+        return 1
+
+    before = _digests()
+    targets = list(names or sorted(before))
+    if not targets:
+        print("No models are downloaded yet.")
+        print("Pick one with: vulnscan-ai setup")
+        return 0
+
+    print(f"Re-pulling {len(targets)} model(s). Ollama never refreshes a model")
+    print("on its own; only changed layers are downloaded.")
+    failed = []
+    for name in targets:
+        if not _pull(name):
+            failed.append(name)
+
+    after = _digests()
+    print("\n" + "=" * 64)
+    for name in targets:
+        old, new = before.get(name), after.get(name)
+        if name in failed:
+            state = "FAILED — offline, or the tag no longer exists"
+        elif old and new and old != new:
+            state = "updated — the tag moved"
+        else:
+            state = "already current"
+        print(f"  {name:<22} {state}")
+
+    stale = off_curated_list(list(after) or targets)
+    if stale:
+        print("\nNot on the current recommended list: " + ", ".join(sorted(stale)))
+        print("A re-pull cannot cross model generations (qwen2.5 -> qwen3 is a")
+        print("different model, not a newer version of it). Switch with")
+        print("'vulnscan-ai setup', then reclaim the disk with 'ollama rm <model>'.")
+    print("=" * 64)
+    return 1 if failed else 0
 
 
 def _recommended_index(budget_gb: float) -> int:

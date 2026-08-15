@@ -175,13 +175,36 @@ class TestProviders(unittest.TestCase):
     def test_deepseek_and_mistral_openai_compatible(self):
         from vulnscanai.ai import get_provider
         ds = get_provider("deepseek")
-        self.assertEqual(ds.default_model, "deepseek-coder")
+        self.assertEqual(ds.default_model, "deepseek-v4-flash")
         self.assertEqual(ds.api_key_env, "DEEPSEEK_API_KEY")
         self.assertTrue(ds.endpoint.endswith("/chat/completions"))
         ms = get_provider("mistral")
-        self.assertEqual(ms.default_model, "open-mixtral-8x7b")
+        self.assertEqual(ms.default_model, "mistral-small-4")
         self.assertEqual(ms.api_key_env, "MISTRAL_API_KEY")
         self.assertTrue(ms.endpoint.endswith("/chat/completions"))
+
+    def test_openai_sends_no_temperature(self):
+        # The GPT-5 reasoning models 400 on any temperature other than the
+        # default ("does not support 0.1 with this model"), which would break
+        # every remediation. The sibling OpenAI-compatible providers still send
+        # it because their APIs accept it.
+        import vulnscanai.ai.openai as O
+        captured = {}
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            captured.update(payload)
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+        orig = O.http.post_json
+        O.http.post_json = fake_post
+        try:
+            p = O.OpenAIProvider()
+            p.api_key = "test"
+            p.complete("sys", "user")
+        finally:
+            O.http.post_json = orig
+        self.assertNotIn("temperature", captured)
+        self.assertEqual(captured["model"], "gpt-5.6-terra")
 
 
 class TestTransactionalApply(unittest.TestCase):
@@ -1838,7 +1861,7 @@ class TestProposalFailure(unittest.TestCase):
 
         class Broke(AIProvider):
             name = "claude"
-            default_model = "claude-sonnet-4-6"
+            default_model = "claude-sonnet-5"
             api_key_env = "ANTHROPIC_API_KEY"
 
             def available(self):
@@ -1868,6 +1891,153 @@ class TestProposalFailure(unittest.TestCase):
         self.assertIn("All proposals failed", buf.getvalue())
 
 
+class TestLocalModelUpdate(unittest.TestCase):
+    """`setup --update` re-pulls downloaded Ollama models. Ollama never
+    refreshes a model on its own, and a re-pull cannot cross generations."""
+
+    def _stub(self, tags_before, tags_after=None, pull_ok=True):
+        """Stub the Ollama HTTP API and the `ollama pull` subprocess."""
+        import vulnscanai.wizard as W
+        self._pulled = []
+        seq = [tags_before, tags_after if tags_after is not None else tags_before]
+
+        def fake_get(url, timeout=None):
+            return {"models": seq[1 if self._pulled else 0]}
+
+        self._orig = (W.http.get_json, W._pull, W._have, W._ensure_server)
+        W.http.get_json = fake_get
+        W._pull = lambda m: (self._pulled.append(m), pull_ok)[1]
+        W._have = lambda b: True
+        W._ensure_server = lambda: True
+
+    def tearDown(self):
+        import vulnscanai.wizard as W
+        if getattr(self, "_orig", None):
+            W.http.get_json, W._pull, W._have, W._ensure_server = self._orig
+
+    def _run(self):
+        import io, contextlib
+        import vulnscanai.wizard as W
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = W.update_models()
+        return rc, buf.getvalue()
+
+    def test_repulls_every_installed_model(self):
+        self._stub([{"name": "qwen3:0.6b", "digest": "aa"},
+                    {"name": "llama3.2:1b", "digest": "bb"}])
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(sorted(self._pulled), ["llama3.2:1b", "qwen3:0.6b"])
+        self.assertIn("already current", out)
+
+    def test_moved_tag_is_reported_as_updated(self):
+        self._stub([{"name": "qwen3:0.6b", "digest": "aa"}],
+                   [{"name": "qwen3:0.6b", "digest": "zz"}])
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("updated", out)
+
+    def test_failed_pull_is_a_nonzero_exit(self):
+        self._stub([{"name": "qwen3:0.6b", "digest": "aa"}], pull_ok=False)
+        rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("FAILED", out)
+
+    def test_no_models_downloaded_is_not_an_error(self):
+        self._stub([])
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._pulled, [])
+        self.assertIn("No models are downloaded", out)
+
+    def test_off_generation_model_is_called_out(self):
+        # The whole point: a re-pull can never turn qwen2.5 into qwen3, so the
+        # operator has to be told to switch rather than silently stay behind.
+        self._stub([{"name": "qwen2.5:0.5b", "digest": "aa"}])
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("qwen2.5:0.5b", out)
+        self.assertIn("cannot cross model generations", out)
+
+    def test_off_curated_list_is_pure(self):
+        import vulnscanai.wizard as W
+        curated = W.MODELS[0]["name"]
+        self.assertEqual(W.off_curated_list([curated]), [])
+        self.assertEqual(W.off_curated_list([curated, "starcoder2"]), ["starcoder2"])
+
+    def test_installed_models_survives_a_dead_server(self):
+        import vulnscanai.wizard as W
+        orig = W.http.get_json
+
+        def boom(url, timeout=None):
+            raise W.http.HttpError(0, "connection refused")
+
+        W.http.get_json = boom
+        try:
+            self.assertEqual(W.installed_models(), [])
+        finally:
+            W.http.get_json = orig
+
+    def _hint(self, provider, model, installed):
+        """Run cli._local_model_hint against a stubbed Ollama."""
+        import io, contextlib
+        from vulnscanai import cli
+        import vulnscanai.wizard as W
+        from vulnscanai.ai.local import LocalProvider
+
+        cfg = Config(state_dir=tempfile.mkdtemp())
+        cfg.provider, cfg.model = provider, model
+        orig = (W.installed_models, LocalProvider.available)
+        W.installed_models = lambda: installed
+        LocalProvider.available = lambda self: True
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                cli._local_model_hint(cfg)
+        finally:
+            W.installed_models, LocalProvider.available = orig
+        return buf.getvalue()
+
+    def test_info_hint_names_the_model_actually_in_use(self):
+        # The provider row prints the class default, which is NOT what a host
+        # configured for a different local model actually runs.
+        out = self._hint("local", "qwen3:0.6b", ["qwen3:0.6b"])
+        self.assertIn("local model in use: qwen3:0.6b (downloaded)", out)
+
+    def test_info_hint_flags_a_missing_download(self):
+        out = self._hint("local", "qwen3:8b", ["qwen3:0.6b"])
+        self.assertIn("NOT downloaded", out)
+        self.assertIn("ollama pull qwen3:8b", out)
+
+    def test_info_hint_reports_off_generation_models(self):
+        out = self._hint("local", "qwen2.5:0.5b", ["qwen2.5:0.5b"])
+        self.assertIn("off the recommended list", out)
+        self.assertIn("qwen2.5:0.5b", out)
+
+    def test_info_hint_stays_quiet_about_unused_local_default(self):
+        # provider is claude -> don't nag that the local *default* model isn't
+        # downloaded; that host isn't using the local backend at all.
+        out = self._hint("claude", None, ["qwen3:0.6b"])
+        self.assertNotIn("local model in use", out)
+        self.assertNotIn("NOT downloaded", out)
+
+    def test_setup_update_flag_routes_to_update_models(self):
+        import types
+        from vulnscanai import cli
+        import vulnscanai.wizard as W
+        orig = W.update_models
+        called = []
+        W.update_models = lambda *a, **k: (called.append(True), 0)[1]
+        try:
+            rc = cli.cmd_setup(Config(state_dir=tempfile.mkdtemp()),
+                               types.SimpleNamespace(update=True))
+        finally:
+            W.update_models = orig
+        self.assertEqual(rc, 0)
+        self.assertTrue(called)
+
+
 class TestModelPicker(unittest.TestCase):
     """The setup wizard offers a menu of known model ids so a bad free-text id
     (the 'Sonnet 5' bug) can't be saved and break every remediation."""
@@ -1883,8 +2053,8 @@ class TestModelPicker(unittest.TestCase):
             W._ask = orig
 
     def test_numbered_choice_returns_known_id(self):
-        # claude known_models[1] == claude-opus-4-8
-        self.assertEqual(self._pick("claude", ["2"]), "claude-opus-4-8")
+        # claude known_models[1] == claude-opus-5
+        self.assertEqual(self._pick("claude", ["2"]), "claude-opus-5")
 
     def test_blank_means_provider_default(self):
         self.assertEqual(self._pick("claude", [""]), "")
@@ -1932,21 +2102,65 @@ class TestClaudeEffort(unittest.TestCase):
         return captured, out
 
     def test_effort_adds_output_config_and_thinking(self):
-        cap, out = self._run(model="claude-opus-4-8", effort="max")
+        cap, out = self._run(model="claude-opus-5", effort="max")
         self.assertEqual(cap["output_config"], {"effort": "max"})
         self.assertEqual(cap["thinking"], {"type": "adaptive"})
         self.assertEqual(cap["max_tokens"], 8000)
         self.assertIn("summary", out)
 
     def test_no_effort_is_plain_request(self):
-        cap, _ = self._run(model="claude-sonnet-4-6")
+        cap, _ = self._run(model="claude-sonnet-5")
         self.assertNotIn("output_config", cap)
         self.assertNotIn("thinking", cap)
-        self.assertEqual(cap["max_tokens"], 2048)
+        # Regression: the 5-series models think even with no "thinking" key, and
+        # max_tokens caps thinking + answer together. The old 2048 ceiling left
+        # too little room and truncated the JSON plan mid-object.
+        self.assertEqual(cap["max_tokens"], 8000)
+
+    def test_refusal_names_the_category(self):
+        # 5-series safety classifiers decline with HTTP 200 + empty content;
+        # a bare "empty response" tells the operator nothing actionable.
+        import vulnscanai.ai.claude as C
+        from vulnscanai.ai.base import ProviderError
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            return {"content": [], "stop_reason": "refusal",
+                    "stop_details": {"type": "refusal", "category": "cyber"}}
+
+        orig = C.http.post_json
+        C.http.post_json = fake_post
+        try:
+            p = C.ClaudeProvider()
+            p.api_key = "test"
+            with self.assertRaises(ProviderError) as cm:
+                p.complete("sys", "user")
+        finally:
+            C.http.post_json = orig
+        self.assertIn("declined", str(cm.exception))
+        self.assertIn("cyber", str(cm.exception))
+
+    def test_empty_content_without_refusal_still_errors(self):
+        # stop_details is absent on a plain empty reply -> must not KeyError.
+        import vulnscanai.ai.claude as C
+        from vulnscanai.ai.base import ProviderError
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            return {"content": [], "stop_reason": "end_turn"}
+
+        orig = C.http.post_json
+        C.http.post_json = fake_post
+        try:
+            p = C.ClaudeProvider()
+            p.api_key = "test"
+            with self.assertRaises(ProviderError) as cm:
+                p.complete("sys", "user")
+        finally:
+            C.http.post_json = orig
+        self.assertIn("empty response", str(cm.exception))
 
     def test_get_provider_threads_effort(self):
         from vulnscanai.ai import get_provider
-        self.assertEqual(get_provider("claude", "claude-opus-4-8",
+        self.assertEqual(get_provider("claude", "claude-opus-5",
                                       effort="high").effort, "high")
         # other providers accept the kwarg and simply ignore it
         self.assertEqual(get_provider("openai", effort="high").effort, "high")

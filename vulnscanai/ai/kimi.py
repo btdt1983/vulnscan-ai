@@ -3,6 +3,10 @@
 """Moonshot Kimi provider (optional).
 
 Kimi exposes an OpenAI-compatible Chat Completions API. Set MOONSHOT_API_KEY.
+The legacy 'moonshot-v1-*' ids this provider used to default to are being sunset
+(closed to new accounts already, platform sunset 2026-08-31), so the default is
+now 'kimi-k3'. Point MOONSHOT_BASE_URL at the current host if the api.moonshot.cn
+endpoint moves with the platform migration.
 """
 
 from __future__ import annotations
@@ -15,8 +19,12 @@ from .base import AIProvider, ProviderError
 
 class KimiProvider(AIProvider):
     name = "kimi"
-    default_model = "moonshot-v1-8k"
-    known_models = ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
+    default_model = "kimi-k3"
+    known_models = [
+        "kimi-k3",                        # flagship default
+        "kimi-k2.7-code",                 # code-specialised
+        "kimi-k2.6",                      # previous generation
+    ]
     api_key_env = "MOONSHOT_API_KEY"
 
     @property

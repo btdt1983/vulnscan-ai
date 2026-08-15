@@ -51,6 +51,7 @@ _vulnscan_ai() {
         audit)     opts="--limit --json";;
         news)      opts="--source --refresh --limit";;
         network)   opts="--add --remove --list --ports";;
+        setup)     opts="--update";;
         *)         opts="";;
     esac
     COMPREPLY=($(compgen -W "$opts --help" -- "$cur"))
