@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.14
+Version:        0.4.15
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,26 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Aug 17 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.15-1
+- The `effective` scanner (reboot/restart posture) gained a 3rd ground-truth
+  check: kernel live-patch (kpatch) posture. A `kpatch-patch` RPM can stage a
+  `.ko` module on disk for the running kernel without it ever being loaded
+  into the kernel (`kpatch.service` failed at boot, or was never started) --
+  dnf/oscap call the kernel patched the moment the RPM lands, but the running
+  kernel still executes the unpatched code. New finding `kpatch-inactive`
+  (important), fixable without a reboot: `systemctl restart kpatch.service`.
+  Suppressed when the kernel itself is already flagged outdated (that state
+  already reports `reboot-kernel`; a live patch not active for a kernel
+  build about to be replaced by a reboot is not a separate problem).
+  Deliberately does not attempt installed-module-to-loaded-module identity
+  matching (fragile kpatch-name parsing) and does not downgrade/suppress a
+  dnf or oscap kernel CVE's severity based on assumed live-patch coverage
+  (needs a CVE-to-livepatch mapping RHEL does not expose cleanly, and risks
+  false negatives) -- both stay deliberately out of scope. NOTE: unit-tested
+  only; kpatch is not installed on the build/release host, so the positive
+  detection path (patch staged, inactive -> finding fires) has not been
+  exercised against a real kpatch install. 394 tests (+9), bandit clean.
+
 * Sat Aug 15 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.14-1
 - AI provider model ids refreshed across the board. Four provider defaults
   had gone dead or were about to: `gemini-2.0-flash` was shut down,
