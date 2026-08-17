@@ -4211,6 +4211,125 @@ class TestEffectiveState(unittest.TestCase):
         probe.assert_not_called()                        # no probe on dry-run
         self.assertTrue(f.remediation.requires_reboot)   # prediction untouched
 
+    def test_livepatch_active_reads_enabled_attribute(self):
+        import tempfile
+        from unittest import mock
+        es = self._es()
+        d = tempfile.mkdtemp()
+        patchdir = os.path.join(d, "kpatch_5_14_0_1")
+        os.makedirs(patchdir)
+        with open(os.path.join(patchdir, "enabled"), "w", encoding="utf-8") as fh:
+            fh.write("0\n")
+        with mock.patch.object(es, "_LIVEPATCH_SYSFS", d):
+            self.assertFalse(es._livepatch_active())      # loaded but disabled
+            with open(os.path.join(patchdir, "enabled"), "w", encoding="utf-8") as fh:
+                fh.write("1\n")
+            self.assertTrue(es._livepatch_active())        # now active
+
+    def test_livepatch_active_no_sysfs(self):
+        from unittest import mock
+        es = self._es()
+        with mock.patch.object(es, "_LIVEPATCH_SYSFS", "/nonexistent/livepatch/xyz"):
+            self.assertFalse(es._livepatch_active())        # no livepatch support at all
+
+    def test_livepatch_installed_for_running_matches_kernel_dir(self):
+        import tempfile
+        from unittest import mock
+        es = self._es()
+        d = tempfile.mkdtemp()
+        kdir = os.path.join(d, "5.14.0-1.el9.x86_64")
+        os.makedirs(kdir)
+        open(os.path.join(kdir, "patch.ko"), "w", encoding="utf-8").close()
+        with mock.patch.object(es, "_LIVEPATCH_INSTALLDIR", d), \
+             mock.patch.object(es, "running_kernel",
+                               return_value="5.14.0-1.el9.x86_64"):
+            self.assertTrue(es._livepatch_installed_for_running())
+        with mock.patch.object(es, "_LIVEPATCH_INSTALLDIR", d), \
+             mock.patch.object(es, "running_kernel",
+                               return_value="5.14.0-9.el9.x86_64"):
+            self.assertFalse(es._livepatch_installed_for_running())  # other kernel
+
+    def test_livepatch_installed_for_running_no_ko_files(self):
+        import tempfile
+        from unittest import mock
+        es = self._es()
+        d = tempfile.mkdtemp()
+        kdir = os.path.join(d, "5.14.0-1.el9.x86_64")
+        os.makedirs(kdir)  # directory exists but carries no .ko module
+        with mock.patch.object(es, "_LIVEPATCH_INSTALLDIR", d), \
+             mock.patch.object(es, "running_kernel",
+                               return_value="5.14.0-1.el9.x86_64"):
+            self.assertFalse(es._livepatch_installed_for_running())
+
+    def test_scan_kpatch_inactive_finding(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None), \
+             mock.patch.object(es, "_livepatch_installed_for_running", return_value=True), \
+             mock.patch.object(es, "_livepatch_active", return_value=False):
+            fs = s.scan()
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].raw["category"], "kpatch-inactive")
+        self.assertEqual(fs[0].severity, "important")
+        self.assertIsNone(fs[0].package)  # else id collides with reboot-kernel
+
+    def test_scan_kpatch_active_no_finding(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None), \
+             mock.patch.object(es, "_livepatch_installed_for_running", return_value=True), \
+             mock.patch.object(es, "_livepatch_active", return_value=True):
+            fs = s.scan()
+        self.assertEqual(fs, [])                          # active -> nothing to report
+
+    def test_scan_kpatch_not_installed_no_finding(self):
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=False), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None), \
+             mock.patch.object(es, "_livepatch_installed_for_running", return_value=False), \
+             mock.patch.object(es, "_livepatch_active", return_value=False):
+            fs = s.scan()
+        self.assertEqual(fs, [])                          # host doesn't live-patch
+
+    def test_scan_kpatch_suppressed_when_kernel_outdated(self):
+        # The kernel-reboot finding already covers this state; a live patch not
+        # active for a kernel that's about to be replaced by a reboot is not a
+        # separate problem, and must not be double-reported.
+        from unittest import mock
+        es = self._es()
+        s = es.EffectiveStateScanner(Config())
+        with mock.patch.object(es, "_kernel_outdated", return_value=True), \
+             mock.patch.object(es, "running_kernel", return_value="5.14.0-1.el9.x86_64"), \
+             mock.patch.object(es, "newest_installed_kernel",
+                               return_value="5.14.0-9.el9.x86_64"), \
+             mock.patch.object(es, "_scan_proc", return_value=(False, {})), \
+             mock.patch.object(es, "_needs_restarting_reboot", return_value=None), \
+             mock.patch.object(es, "_livepatch_installed_for_running", return_value=True), \
+             mock.patch.object(es, "_livepatch_active", return_value=False):
+            fs = s.scan()
+        self.assertEqual(len(fs), 1)
+        self.assertEqual(fs[0].raw["category"], "reboot-kernel")
+
+    def test_kpatch_finding_id_distinct_from_reboot_kernel(self):
+        # Both findings can appear in *different* scans of the same host
+        # (reboot-kernel now, kpatch-inactive after the reboot); diff_findings
+        # keys off .id, so they must never hash the same.
+        reboot = _finding(source="effective", package="kernel", cve_ids=[],
+                          title="Reboot required: running an older kernel "
+                                "than the one installed")
+        kpatch = _finding(source="effective", package=None, cve_ids=[],
+                          title="Kernel live patch installed but not active")
+        self.assertNotEqual(reboot.id, kpatch.id)
+
 
 class TestFipsPosture(unittest.TestCase):
     """The FIPS-posture scanner: crypto-policy / FIPS-mode gaps, all detection

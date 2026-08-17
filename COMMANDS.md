@@ -159,9 +159,15 @@ vulnscan-ai scan [--scanner NAME]... [--min-severity SEV] [--no-enrich]
 > the **running** system is still using: a host on an **older kernel** than the
 > one installed (package scanners call the kernel patched the instant the RPM
 > lands, but you keep executing the vulnerable one until you reboot — severity
-> `important`), and services still mapping a **deleted/replaced library**
+> `important`), services still mapping a **deleted/replaced library**
 > (`libssl` updated on disk but the process holds the old code — restart the
-> service to load the fix). Pure stdlib via `/proc` + `rpm`; when dnf-utils'
+> service to load the fix), and a **kpatch live-patch installed but not active**
+> (a `.ko` module staged under `/var/lib/kpatch/<kernel>/` for the running
+> kernel, but no patch is enabled in `/sys/kernel/livepatch` — `kpatch.service`
+> never loaded it, so the kernel fix isn't in effect — severity `important`, no
+> reboot needed to fix it: `systemctl restart kpatch.service`). Suppressed when
+> the kernel itself is already flagged outdated (the reboot fixes both at once).
+> Pure stdlib via `/proc` + `/sys/kernel/livepatch` + `rpm`; when dnf-utils'
 > `needs-restarting -r` is present it is used as the authoritative reboot verdict.
 > The findings are informational posture (no auto-remediation — restart/reboot on
 > your schedule), and `fix` **overwrites a package fix's `requires_reboot` with

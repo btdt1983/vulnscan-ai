@@ -2,7 +2,7 @@
 # Copyright (C) 2026 techhack
 """Effective-state scanner: what the RUNNING system is still using.
 
-A patch on disk is not a patch in RAM. Two read-only ground-truth checks:
+A patch on disk is not a patch in RAM. Three read-only ground-truth checks:
 
   1. **Kernel currency** — the running kernel (``os.uname``) vs the newest
      installed ``kernel`` package. If an update landed but the host has not
@@ -15,11 +15,25 @@ A patch on disk is not a patch in RAM. Two read-only ground-truth checks:
      map each PID to its systemd unit via ``/proc/<pid>/cgroup``. A deleted CORE
      library (glibc/loader/systemd) means a reboot; a deleted app library
      (e.g. openssl) in a specific service means restart THAT service.
+  3. **Inactive kernel live patch** — kpatch (Red Hat kernel live patching) can
+     ship a kernel fix as an on-disk ``.ko`` module staged for the running
+     kernel under ``/var/lib/kpatch/<uname -r>/`` without it ever being loaded
+     into the kernel (``kpatch.service`` failed at boot, or was never started).
+     dnf/oscap call the kernel patched the moment the RPM lands; the running
+     kernel says otherwise. We read the upstream livepatch sysfs ABI
+     (``/sys/kernel/livepatch/<patch>/enabled``) directly rather than parsing
+     ``kpatch list`` output. Deliberately conservative: we do NOT try to match a
+     specific installed ``.ko`` to a specific loaded module by identity/version
+     (that needs ``modinfo``-level parsing of the kpatch-generated module name,
+     which is fragile) — we only ask "is *any* live patch active for this
+     kernel", the same low-false-positive bar as the other two checks. Silent
+     (no findings) on any host that doesn't use live patching, which is most of
+     them.
 
-Pure stdlib (reads ``/proc``, ``os.uname``, ``rpm``). When dnf-utils'
-``needs-restarting -r`` is present it is used as the authoritative reboot verdict.
-No kpatch/livepatch handling in this release (kept deliberately additive — the
-findings are independent posture findings that no enricher reconciles away).
+Pure stdlib (reads ``/proc``, ``/sys``, ``/var/lib/kpatch``, ``os.uname``,
+``rpm``). When dnf-utils' ``needs-restarting -r`` is present it is used as the
+authoritative reboot verdict. All three checks are independent additive posture
+findings that no enricher reconciles away.
 """
 
 from __future__ import annotations
@@ -45,6 +59,15 @@ _MAX_SERVICE_FINDINGS = 25
 # Library-file location prefixes (a deleted mapping outside these — a tmp file,
 # a memfd, /dev/zero — is not a superseded library and is ignored).
 _LIB_PREFIXES = ("/usr/lib", "/lib", "/usr/lib64", "/lib64", "/usr/local/lib")
+
+# Upstream kernel livepatch sysfs root (RHEL 8+/Fedora; what kpatch itself reads
+# for `kpatch list`). Absent on a kernel built without CONFIG_LIVEPATCH.
+_LIVEPATCH_SYSFS = "/sys/kernel/livepatch"
+
+# Where kpatch stages installed-but-not-necessarily-loaded patch modules, one
+# subdirectory per kernel release (named by the exact `uname -r` string) holding
+# that kernel's `.ko` patch module(s). Same layout kpatch's own CLI reads.
+_LIVEPATCH_INSTALLDIR = "/var/lib/kpatch"
 
 
 def running_kernel() -> str:
@@ -228,6 +251,41 @@ def reboot_pending() -> bool:
     return core
 
 
+def _livepatch_active() -> bool:
+    """True if any live-patch module under the livepatch sysfs tree is
+    currently ENABLED (active in the running kernel).
+
+    A patch module can be loaded but disabled (``enabled`` == "0"), so
+    directory presence alone does not mean it is doing anything — we read the
+    ``enabled`` attribute kpatch itself reads for `kpatch list`.
+    """
+    try:
+        entries = os.listdir(_LIVEPATCH_SYSFS)
+    except OSError:
+        return False
+    for name in entries:
+        try:
+            with open(os.path.join(_LIVEPATCH_SYSFS, name, "enabled"),
+                      encoding="utf-8") as fh:
+                if fh.read().strip() == "1":
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def _livepatch_installed_for_running() -> bool:
+    """True if kpatch has an on-disk live-patch ``.ko`` staged for the RUNNING
+    kernel release (a directory named by the exact ``uname -r`` string under
+    ``/var/lib/kpatch``, kpatch's own layout — so this is a direct string
+    compare, no version-string translation needed)."""
+    kdir = os.path.join(_LIVEPATCH_INSTALLDIR, running_kernel())
+    try:
+        return any(name.endswith(".ko") for name in os.listdir(kdir))
+    except OSError:
+        return False
+
+
 class EffectiveStateScanner(Scanner):
     """Detects vulnerabilities that persist in RAM after an on-disk patch."""
 
@@ -310,6 +368,34 @@ class EffectiveStateScanner(Scanner):
                     f"only the first {_MAX_SERVICE_FINDINGS} are listed. A reboot "
                     f"clears all of them at once."),
                 raw={"category": "restart-service-overflow", "count": extra},
+            ))
+
+        # Live-patch (kpatch) posture. Skip entirely once the kernel itself is
+        # already flagged outdated (reboot-kernel above): a live patch not
+        # being active for a kernel build that is about to be superseded by a
+        # reboot is expected, not a separate problem, and would double-report
+        # the same underlying risk.
+        if not kernel_outdated and _livepatch_installed_for_running() \
+                and not _livepatch_active():
+            findings.append(Finding(
+                source=self.name,
+                title="Kernel live patch installed but not active",
+                severity="important",
+                # No `package` set (deliberately): Finding.id falls back to
+                # (source, title) for config-style findings with no
+                # advisory/cve/package. Setting package="kernel" here would
+                # collide with the reboot-kernel finding's id (both would hash
+                # to the same (effective, "", "", "kernel") tuple), breaking
+                # diff_findings drift detection across a reboot-kernel ->
+                # kpatch-inactive transition between scans.
+                description=(
+                    f"A kpatch live-patch module is staged on disk for the "
+                    f"running kernel ({running}) but no live patch is currently "
+                    f"active in the kernel — the security fix it carries is NOT "
+                    f"in effect, even though dnf/oscap may already report the "
+                    f"kernel as patched. Load it without a reboot: systemctl "
+                    f"restart kpatch.service"),
+                raw={"category": "kpatch-inactive"},
             ))
 
         return findings

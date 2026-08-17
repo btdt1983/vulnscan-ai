@@ -322,9 +322,13 @@ The scanners are built to avoid noise:
 - **`effective`** catches what a patch on disk leaves running in RAM: a host
   still on an **older kernel** than the one installed (the package scanners
   report it patched the moment the RPM lands, but you keep executing the
-  vulnerable kernel until you reboot), and services still mapping a **deleted/
+  vulnerable kernel until you reboot), services still mapping a **deleted/
   replaced library** (`libssl` updated but the running process holds the old
-  code — restart to load the fix). Pure stdlib via `/proc` + `rpm`; uses
+  code — restart to load the fix), and a **kpatch live-patch installed but not
+  active** (staged on disk for the running kernel but `kpatch.service` never
+  loaded it — the fix isn't in effect even though dnf/oscap call the kernel
+  patched; fixable with `systemctl restart kpatch.service`, no reboot needed).
+  Pure stdlib via `/proc` + `/sys/kernel/livepatch` + `rpm`; uses
   `needs-restarting -r` (dnf-utils) as the authoritative reboot verdict when
   present. `fix` also **overwrites a package fix's `requires_reboot` with this
   ground truth** after applying, so the "reboot required" note is a fact, not a
