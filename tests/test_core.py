@@ -175,11 +175,11 @@ class TestProviders(unittest.TestCase):
     def test_deepseek_and_mistral_openai_compatible(self):
         from vulnscanai.ai import get_provider
         ds = get_provider("deepseek")
-        self.assertEqual(ds.default_model, "deepseek-v4-flash")
+        self.assertEqual(ds.default_model, "deepseek-flash")
         self.assertEqual(ds.api_key_env, "DEEPSEEK_API_KEY")
         self.assertTrue(ds.endpoint.endswith("/chat/completions"))
         ms = get_provider("mistral")
-        self.assertEqual(ms.default_model, "mistral-small-4")
+        self.assertEqual(ms.default_model, "mistral-small-latest")
         self.assertEqual(ms.api_key_env, "MISTRAL_API_KEY")
         self.assertTrue(ms.endpoint.endswith("/chat/completions"))
 

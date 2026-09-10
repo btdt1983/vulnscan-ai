@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.15
+Version:        0.4.16
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,18 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Thu Sep 10 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.16-1
+- AI provider model refresh, found by a routine "are the providers still
+  current" audit. Mistral's default/known model ids were the marketing
+  display names (mistral-small-4, mistral-medium-3-5, mistral-large-3)
+  instead of real API ids -- Mistral's API takes the always-current
+  "-latest" alias per tier (or a dated id), so every Mistral request would
+  have failed with a 400. Fixed to mistral-small-latest/mistral-medium-
+  latest/mistral-large-latest/codestral-latest. DeepSeek's deepseek-v4-flash
+  and deepseek-v4-pro still work (legacy aliases, silently routed) but
+  DeepSeek has folded the "pro" tier entirely into Flash, so switched to
+  the current bare id deepseek-flash. Claude and OpenAI defaults confirmed
+  still current, no change needed there.
 * Mon Aug 17 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.15-1
 - The `effective` scanner (reboot/restart posture) gained a 3rd ground-truth
   check: kernel live-patch (kpatch) posture. A `kpatch-patch` RPM can stage a
