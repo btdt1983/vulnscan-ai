@@ -38,7 +38,7 @@ MODELS = [
      "note": "strong quality"},
     {"name": "qwen3:14b", "size": "9.3 GB", "need": 11.0,
      "note": "best quality; GPU recommended"},
-    {"name": "qwen3:32b", "size": "20 GB", "need": 24.0,
+    {"name": "qwen3.8:27b", "size": "18 GB", "need": 24.0,
      "note": "top quality; needs a big GPU"},
 ]
 

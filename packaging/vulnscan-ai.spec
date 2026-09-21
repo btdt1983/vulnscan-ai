@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.16
+Version:        0.4.17
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,20 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Mon Sep 21 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.17-1
+- Gemini and local-model (Ollama) defaults refreshed to the current
+  generation. Gemini default moved to gemini-3.8-flash (from gemini-2.5-
+  flash); this is more than an id swap, since Gemini 3 deprecated the
+  temperature/top_p/top_k sampling parameters this provider used to send --
+  replaced with responseMimeType: application/json (the prompt already
+  spells out the full JSON schema, so this keeps structured output reliable
+  without the deprecated knobs). The setup wizard's top offline tier moved
+  from qwen3:32b to qwen3.8:27b (a newer generation at a comparable ~18-20GB
+  footprint; qwen3.8 has no smaller tiers yet, so the tiny/mid tiers stay on
+  qwen3). As with the 0.4.14 model refresh, these ids are sourced from
+  vendor docs, not a live API call -- no GEMINI_API_KEY or working
+  ANTHROPIC_API_KEY was available on the build host to smoke-test against
+  the real APIs.
 * Thu Sep 10 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.16-1
 - AI provider model refresh, found by a routine "are the providers still
   current" audit. Mistral's default/known model ids were the marketing

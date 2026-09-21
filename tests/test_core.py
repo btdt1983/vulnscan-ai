@@ -206,6 +206,32 @@ class TestProviders(unittest.TestCase):
         self.assertNotIn("temperature", captured)
         self.assertEqual(captured["model"], "gpt-5.6-terra")
 
+    def test_gemini_sends_no_temperature_and_requests_json(self):
+        # Gemini 3 deprecated temperature/top_p/top_k -- see the module
+        # docstring in vulnscanai/ai/gemini.py for the full rationale.
+        # responseMimeType replaces temperature as the determinism mechanism
+        # for structured output.
+        import vulnscanai.ai.gemini as G
+        captured = {}
+
+        def fake_post(url, payload, timeout=None):
+            captured.update(payload)
+            return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+        orig = G.http.post_json
+        G.http.post_json = fake_post
+        try:
+            p = G.GeminiProvider()
+            p.api_key = "test"
+            p.complete("sys", "user")
+        finally:
+            G.http.post_json = orig
+        cfg = captured["generationConfig"]
+        self.assertNotIn("temperature", cfg)
+        self.assertNotIn("top_p", cfg)
+        self.assertNotIn("top_k", cfg)
+        self.assertEqual(cfg["responseMimeType"], "application/json")
+
 
 class TestTransactionalApply(unittest.TestCase):
     def _tx_finding(self, tmp, **rem_kw):
