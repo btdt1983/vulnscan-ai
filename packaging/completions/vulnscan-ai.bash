@@ -46,6 +46,7 @@ _vulnscan_ai() {
         fix)       opts="--scan --scanner --all --no-enrich --min-severity --yes --dry-run --pdf --export-script --export-ansible --ignore --offline --no-catalog --no-scap-grounding";;
         rollback)  opts="--list";;
         report)    opts="-o --output --min-severity";;
+        providers) opts="--verify";;
         scheduled) opts="--scanner --all --no-enrich --min-severity --plan --html --keep --fail-on";;
         dashboard) opts="--set-password --user --allow --deny --list --enable-fix --disable-fix --port --bind";;
         audit)     opts="--limit --json";;

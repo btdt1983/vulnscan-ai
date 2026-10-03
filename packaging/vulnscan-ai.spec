@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.17
+Version:        0.4.18
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,23 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Sat Oct 03 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.18-1
+- New: `providers --verify` queries each configured AI provider's own
+  live model-list endpoint and flags a default/selected model id that no
+  longer exists there, instead of only finding out from a failed `fix`
+  run. The active provider is checked against the model you actually use
+  (--model/config override included); other configured providers are
+  checked against their own default. Claude/OpenAI/Mistral/DeepSeek/Kimi
+  route shapes were live-verified against the real APIs with a bogus key
+  (401/400 confirms routing + auth, distinct from a 404 wrong-path) --
+  confirmed in particular that DeepSeek's list-models route has no /v1
+  segment. Gemini's API key now goes in an `x-goog-api-key` header
+  instead of the `?key=` query string, for both this new check and the
+  existing completion call -- a query-string key was leaking into this
+  tool's own error messages. No real (non-bogus) API key was available on
+  the build host, so a genuine 200 response was never observed for any
+  cloud provider; route shape and auth-vs-routing are live-confirmed, the
+  response body shape is vendor-doc-sourced.
 * Mon Sep 21 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.17-1
 - Gemini and local-model (Ollama) defaults refreshed to the current
   generation. Gemini default moved to gemini-3.8-flash (from gemini-2.5-

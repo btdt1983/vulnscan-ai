@@ -528,8 +528,18 @@ ready (key present, or local server reachable).
 
 ```bash
 vulnscan-ai providers
+vulnscan-ai providers --verify   # also live-check each configured model id
 ```
-No options. `local` shows `ready` when an Ollama server answers.
+`local` shows `ready` when an Ollama server answers.
+
+`--verify` queries each **configured** provider's (key present, or local
+server reachable) own list-models endpoint and reports whether the model it
+would actually use still exists there — the model it would use for the
+active provider (`--provider`/`VULNSCANAI_PROVIDER`, with any `--model`/
+config override), and each other provider's own default otherwise. Vendor
+model ids rotate over time; this catches a since-retired id before it fails
+mid-`fix` with a cryptic API error. Unconfigured providers are skipped, not
+failed.
 
 Provider keys (set in the environment):
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 
 from .. import http
-from .base import AIProvider, ProviderError
+from .base import AIProvider, ProviderError, list_models_openai_compatible
 
 
 class MistralProvider(AIProvider):
@@ -55,3 +55,9 @@ class MistralProvider(AIProvider):
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise ProviderError("unexpected Mistral response shape") from exc
+
+    def list_models(self):
+        if not self.api_key:
+            raise ProviderError("MISTRAL_API_KEY is not set")
+        base = os.environ.get("MISTRAL_BASE_URL", "https://api.mistral.ai/v1").rstrip("/")
+        return list_models_openai_compatible("Mistral", base, self.api_key, self.timeout)

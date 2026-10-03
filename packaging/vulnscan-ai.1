@@ -164,7 +164,12 @@ Output file (default \fIvulnscan-ai-report.pdf\fR).
 Only include findings at or above this severity.
 .SS providers
 List AI providers, default models, key environment variables, and readiness.
-No options.
+.TP
+.B \-\-verify
+Also query each configured provider's live model list and flag a model id
+(the active provider's \fB\-\-model\fR/config override, or each other
+provider's own default) that no longer exists there. Unconfigured providers
+are skipped.
 .SS setup
 Interactive first-run wizard: detect GPU/RAM, list offline models sized to the
 host, optionally install Ollama, download the chosen model, and save it as the

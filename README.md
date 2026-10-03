@@ -112,6 +112,12 @@ you can also dial the **reasoning effort** with `--effort low|medium|high|xhigh|
 thinking, so the model reasons harder on tricky fixes. Use `max` when correctness
 matters more than cost; other providers ignore the flag.
 
+**Did my model id just get retired?** Vendors rotate model ids over time.
+`vulnscan-ai providers --verify` queries each configured provider's live
+model list and flags a model id (default or your `--model`/config override)
+that no longer exists there, instead of letting you find out from a failed
+`fix` run.
+
 ### Fully offline / air-gapped
 
 **Package fixes need no AI at all.** For `dnf`/`oscap` (package/advisory)

@@ -14,6 +14,8 @@ import os
 import re
 from typing import List, Optional
 
+from .. import http
+
 
 class ProviderError(Exception):
     pass
@@ -46,6 +48,39 @@ class AIProvider:
 
     def complete(self, system: str, user: str) -> str:
         raise NotImplementedError
+
+    def list_models(self) -> List[str]:
+        """Model ids this account can currently use, via the vendor's own
+        list-models endpoint. Lets `providers --verify` catch a configured
+        default/selected model id that has quietly been retired, instead of
+        only finding out on the next real API call. Providers that can't
+        support this (no such endpoint) raise ProviderError.
+
+        Deliberately single-page: every implementation below asks for the
+        largest page size each API accepts (1000), confirmed live
+        (2026-10-03, bogus-key probes) not to 400 on that value. None of
+        these vendors' catalogs run anywhere near that size, so a second
+        page is not expected in practice — but if a vendor ever does grow
+        past it, a configured-but-older model id could fall off page one and
+        get reported STALE while still actually live. Not following the
+        cursor is a conscious choice (Anthropic's `has_more`/`last_id`,
+        Gemini's `nextPageToken`), not an oversight."""
+        raise ProviderError(f"{self.name} does not support live model verification")
+
+
+def list_models_openai_compatible(provider_label: str, base_url: str, api_key: str,
+                                  timeout: int) -> List[str]:
+    """Shared GET {base_url}/models for the OpenAI-compatible chat providers
+    (openai, mistral, deepseek, kimi all expose this same shape)."""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        data = http.get_json(f"{base_url}/models", headers=headers, timeout=timeout)
+    except http.HttpError as exc:
+        raise ProviderError(f"{provider_label} API error: {exc}") from exc
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ProviderError(f"unexpected {provider_label} model-list response shape")
+    return [m["id"] for m in items if isinstance(m, dict) and isinstance(m.get("id"), str)]
 
 
 def extract_json(text: str) -> dict:

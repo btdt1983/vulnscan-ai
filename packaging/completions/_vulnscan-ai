@@ -77,6 +77,9 @@ _vulnscan-ai() {
           _arguments \
             '(-o --output)'{-o,--output}'[output path (.pdf/.html/.json/.sarif)]:file:_files' \
             "--min-severity[severity floor]:severity:($sev)" ;;
+        providers)
+          _arguments \
+            '--verify[live-check each configured provider'\''s model id]' ;;
         scheduled)
           _arguments \
             "*--scanner[scanner to run]:scanner:($scanners)" \

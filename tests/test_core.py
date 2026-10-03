@@ -214,8 +214,10 @@ class TestProviders(unittest.TestCase):
         import vulnscanai.ai.gemini as G
         captured = {}
 
-        def fake_post(url, payload, timeout=None):
+        def fake_post(url, payload, headers=None, timeout=None):
             captured.update(payload)
+            captured["_url"] = url
+            captured["_headers"] = headers
             return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
 
         orig = G.http.post_json
@@ -231,6 +233,349 @@ class TestProviders(unittest.TestCase):
         self.assertNotIn("top_p", cfg)
         self.assertNotIn("top_k", cfg)
         self.assertEqual(cfg["responseMimeType"], "application/json")
+        # the API key must go in a header, never the URL (it ends up in
+        # request logs and in this tool's own HttpError messages otherwise)
+        self.assertNotIn("test", captured["_url"])
+        self.assertEqual(captured["_headers"]["x-goog-api-key"], "test")
+
+    def test_claude_list_models(self):
+        import vulnscanai.ai.claude as C
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return {"data": [{"id": "claude-sonnet-5"}, {"id": "claude-opus-5"}]}
+
+        orig = C.http.get_json
+        C.http.get_json = fake_get
+        try:
+            p = C.ClaudeProvider()
+            p.api_key = "test"
+            models = p.list_models()
+        finally:
+            C.http.get_json = orig
+        self.assertEqual(captured["url"], "https://api.anthropic.com/v1/models?limit=1000")
+        self.assertEqual(captured["headers"]["x-api-key"], "test")
+        self.assertEqual(captured["headers"]["anthropic-version"], C.ClaudeProvider.api_version)
+        self.assertEqual(models, ["claude-sonnet-5", "claude-opus-5"])
+
+    def test_claude_list_models_requires_key(self):
+        import vulnscanai.ai.claude as C
+        p = C.ClaudeProvider()
+        p.api_key = None
+        with self.assertRaises(C.ProviderError):
+            p.list_models()
+
+    def test_gemini_list_models_strips_prefix(self):
+        import vulnscanai.ai.gemini as G
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return {"models": [{"name": "models/gemini-3.8-flash"},
+                               {"name": "models/gemini-2.5-pro"}]}
+
+        orig = G.http.get_json
+        G.http.get_json = fake_get
+        try:
+            p = G.GeminiProvider()
+            p.api_key = "test"
+            models = p.list_models()
+        finally:
+            G.http.get_json = orig
+        self.assertEqual(models, ["gemini-3.8-flash", "gemini-2.5-pro"])
+        # the API key must go in a header, never the URL
+        self.assertNotIn("test", captured["url"])
+        self.assertEqual(captured["headers"]["x-goog-api-key"], "test")
+
+    def test_local_list_models(self):
+        import vulnscanai.ai.local as L
+
+        def fake_get(url, timeout=None):
+            self.assertTrue(url.endswith("/api/tags"))
+            return {"models": [{"name": "qwen3.8:27b"}, {"model": "llama3.1:8b"}]}
+
+        orig = L.http.get_json
+        L.http.get_json = fake_get
+        try:
+            models = L.LocalProvider().list_models()
+        finally:
+            L.http.get_json = orig
+        self.assertEqual(models, ["qwen3.8:27b", "llama3.1:8b"])
+
+    def test_local_list_models_unreachable_raises(self):
+        import vulnscanai.ai.local as L
+
+        def fake_get(url, timeout=None):
+            raise L.http.HttpError(0, "connection refused")
+
+        orig = L.http.get_json
+        L.http.get_json = fake_get
+        try:
+            with self.assertRaises(L.ProviderError):
+                L.LocalProvider().list_models()
+        finally:
+            L.http.get_json = orig
+
+    def test_openai_compatible_providers_list_models(self):
+        # openai/mistral/deepseek/kimi all share base.list_models_openai_compatible
+        # — check each wires it to the right host and that malformed entries
+        # (no "id", non-string id) are filtered rather than raising.
+        import vulnscanai.ai.openai as O
+        import vulnscanai.ai.mistral as M
+        import vulnscanai.ai.deepseek as D
+        import vulnscanai.ai.kimi as K
+        cases = [
+            (O.OpenAIProvider, O.http, "https://api.openai.com/v1/models"),
+            (M.MistralProvider, M.http, "https://api.mistral.ai/v1/models"),
+            (D.DeepSeekProvider, D.http, "https://api.deepseek.com/models"),
+            (K.KimiProvider, K.http, "https://api.moonshot.cn/v1/models"),
+        ]
+        for cls, http_mod, expected_url in cases:
+            captured = {}
+
+            def fake_get(url, headers=None, timeout=None, _c=captured):
+                _c["url"] = url
+                _c["headers"] = headers
+                return {"data": [{"id": "m1"}, {"no-id": True}, {"id": 2}]}
+
+            orig = http_mod.get_json
+            http_mod.get_json = fake_get
+            try:
+                p = cls()
+                p.api_key = "test"
+                models = p.list_models()
+            finally:
+                http_mod.get_json = orig
+            self.assertEqual(captured["url"], expected_url, cls)
+            self.assertEqual(captured["headers"]["Authorization"], "Bearer test", cls)
+            self.assertEqual(models, ["m1"], cls)
+
+    def test_openai_compatible_providers_list_models_requires_key(self):
+        import vulnscanai.ai.openai as O
+        import vulnscanai.ai.mistral as M
+        import vulnscanai.ai.deepseek as D
+        import vulnscanai.ai.kimi as K
+        from vulnscanai.ai.base import ProviderError
+        for cls in (O.OpenAIProvider, M.MistralProvider, D.DeepSeekProvider, K.KimiProvider):
+            p = cls()
+            p.api_key = None
+            with self.assertRaises(ProviderError):
+                p.list_models()
+
+    def test_providers_verify_reports_ok_stale_and_skips_unconfigured(self):
+        import argparse
+        import contextlib
+        import vulnscanai.cli as C
+
+        class _OkProvider:
+            name = "ok"
+            default_model = "m1"
+            api_key_env = "OK_KEY"
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                return ["m1", "m2"]
+
+        class _StaleProvider:
+            name = "stale"
+            default_model = "old-id"
+            api_key_env = "STALE_KEY"
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                return ["new1", "new2"]
+
+        class _ErrorProvider:
+            name = "errors"
+            default_model = "x"
+            api_key_env = "ERR_KEY"
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                raise C.ProviderError("boom from vendor")
+
+        class _UnconfiguredProvider:
+            name = "unconfigured"
+            default_model = "x"
+            api_key_env = "NEEDS_KEY"
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return False
+
+            def list_models(self):
+                raise AssertionError("must not be called when not available")
+
+        orig = dict(C.PROVIDERS)
+        C.PROVIDERS.clear()
+        C.PROVIDERS.update({
+            "ok": _OkProvider, "stale": _StaleProvider,
+            "errors": _ErrorProvider, "unconfigured": _UnconfiguredProvider,
+        })
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = C.cmd_providers(Config(), argparse.Namespace(verify=True))
+            out = buf.getvalue()
+        finally:
+            C.PROVIDERS.clear()
+            C.PROVIDERS.update(orig)
+        self.assertEqual(rc, 0)
+        self.assertIn("verify: OK — 'm1' is live", out)
+        self.assertIn("verify: STALE — 'old-id' not found", out)
+        self.assertIn("verify: boom from vendor", out)
+        # the unconfigured provider's row prints but gets no verify line at all
+        unconfigured_block = out.split("unconfigured")[1].split("\n\n")[0]
+        self.assertNotIn("verify:", unconfigured_block)
+
+    def test_providers_verify_uses_configured_model_override(self):
+        # --verify must check the model a real run would actually use
+        # (args.model or cfg.model for the active provider), not always the
+        # class default — a stale custom --model in config.json is exactly
+        # the case this feature exists to catch.
+        import argparse
+        import contextlib
+        import vulnscanai.cli as C
+
+        class _ActiveProvider:
+            name = "claude"
+            default_model = "claude-sonnet-5"
+            api_key_env = "FAKE_KEY"
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                return ["claude-sonnet-5", "claude-opus-5"]
+
+        orig = dict(C.PROVIDERS)
+        C.PROVIDERS.clear()
+        C.PROVIDERS.update({"claude": _ActiveProvider})
+        try:
+            cfg = Config()
+            cfg.provider = "claude"
+            cfg.model = "claude-sonnet-3-retired"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = C.cmd_providers(cfg, argparse.Namespace(verify=True))
+            out = buf.getvalue()
+        finally:
+            C.PROVIDERS.clear()
+            C.PROVIDERS.update(orig)
+        self.assertEqual(rc, 0)
+        self.assertIn("verify: STALE — 'claude-sonnet-3-retired' not found", out)
+        # the catalog row itself still shows the class default, unaffected
+        self.assertIn("default-model=claude-sonnet-5", out)
+
+    def test_providers_verify_skips_local_when_not_active(self):
+        # local.available() just means an Ollama server answers somewhere —
+        # not a deliberate "I use this provider" signal like a cloud key is,
+        # and its class default_model is a historical fallback nobody
+        # actually pulls. Verifying it anyway would flag a provider the user
+        # never configured.
+        import argparse
+        import contextlib
+        import vulnscanai.cli as C
+
+        class _FakeLocal:
+            name = "local"
+            default_model = "llama3.1"
+            api_key_env = ""
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                raise AssertionError(
+                    "local must not be verified when it isn't the active provider")
+
+        orig = dict(C.PROVIDERS)
+        C.PROVIDERS.clear()
+        C.PROVIDERS.update({"local": _FakeLocal})
+        try:
+            cfg = Config()
+            cfg.provider = "claude"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = C.cmd_providers(cfg, argparse.Namespace(verify=True))
+            out = buf.getvalue()
+        finally:
+            C.PROVIDERS.clear()
+            C.PROVIDERS.update(orig)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("verify:", out)
+
+    def test_providers_verify_checks_local_when_active(self):
+        import argparse
+        import contextlib
+        import vulnscanai.cli as C
+
+        class _FakeLocal:
+            name = "local"
+            default_model = "llama3.1"
+            api_key_env = ""
+
+            def __init__(self, model=None):
+                self.model = model or self.default_model
+
+            def available(self):
+                return True
+
+            def list_models(self):
+                return ["llama3.2:1b"]
+
+        orig = dict(C.PROVIDERS)
+        C.PROVIDERS.clear()
+        C.PROVIDERS.update({"local": _FakeLocal})
+        try:
+            cfg = Config()
+            cfg.provider = "local"
+            cfg.model = "llama3.2:1b"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = C.cmd_providers(cfg, argparse.Namespace(verify=True))
+            out = buf.getvalue()
+        finally:
+            C.PROVIDERS.clear()
+            C.PROVIDERS.update(orig)
+        self.assertEqual(rc, 0)
+        self.assertIn("verify: OK — 'llama3.2:1b' is live", out)
+
+    def test_providers_without_verify_flag_unchanged(self):
+        import argparse
+        import contextlib
+        import vulnscanai.cli as C
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = C.cmd_providers(Config(), argparse.Namespace(verify=False))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("verify:", buf.getvalue())
 
 
 class TestTransactionalApply(unittest.TestCase):

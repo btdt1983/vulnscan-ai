@@ -81,3 +81,22 @@ class LocalProvider(AIProvider):
             return data["message"]["content"]
         except (KeyError, TypeError) as exc:
             raise ProviderError("unexpected local model response shape") from exc
+
+    def list_models(self):
+        """Models Ollama currently has pulled (not a remote catalog — Ollama
+        has no "list everything available" endpoint, only "what's on disk").
+        Same /api/tags source `wizard.installed_models()` uses."""
+        try:
+            data = http.get_json(f"{self.base_url}/api/tags", timeout=10)
+        except http.HttpError as exc:
+            raise ProviderError(
+                f"cannot reach Ollama at {self.base_url}: {exc}") from exc
+        items = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return []
+        out = []
+        for m in items:
+            name = (m.get("name") or m.get("model")) if isinstance(m, dict) else None
+            if isinstance(name, str) and name:
+                out.append(name)
+        return out

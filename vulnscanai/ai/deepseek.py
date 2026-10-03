@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 
 from .. import http
-from .base import AIProvider, ProviderError
+from .base import AIProvider, ProviderError, list_models_openai_compatible
 
 
 class DeepSeekProvider(AIProvider):
@@ -55,3 +55,9 @@ class DeepSeekProvider(AIProvider):
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise ProviderError("unexpected DeepSeek response shape") from exc
+
+    def list_models(self):
+        if not self.api_key:
+            raise ProviderError("DEEPSEEK_API_KEY is not set")
+        base = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+        return list_models_openai_compatible("DeepSeek", base, self.api_key, self.timeout)

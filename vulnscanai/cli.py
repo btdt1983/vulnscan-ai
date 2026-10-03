@@ -1106,11 +1106,41 @@ def cmd_menu(cfg: Config, args) -> int:
 
 
 def cmd_providers(cfg: Config, args) -> int:
+    verify = getattr(args, "verify", False)
+    # Mirror the resolution order get_provider() is actually called with
+    # elsewhere (args.provider or cfg.provider, args.model or cfg.model), so
+    # --verify checks the model a real run would use, not just the class
+    # default — a per-provider --model override in config.json is exactly
+    # the kind of thing worth live-checking.
+    active_name = (getattr(args, "provider", None) or cfg.provider or "").lower()
+    active_model = getattr(args, "model", None) or cfg.model
     for name, cls in PROVIDERS.items():
-        inst = cls()
+        inst = cls(model=active_model if name == active_name else None)
         flag = "ready" if inst.available() else "needs config"
         print(f"{name:<8} {flag:<12} default-model={inst.default_model} "
               f"key-env={cls.api_key_env or '(none)'}")
+        if not verify or not inst.available():
+            continue
+        if name == "local" and name != active_name:
+            # local.available() just means an Ollama server answers somewhere
+            # on the network — unlike a cloud key, that's not a deliberate
+            # "I use this provider" signal, and its class default_model is a
+            # historical fallback nobody actually pulls. Checking it anyway
+            # would flag a provider the user never configured.
+            continue
+        try:
+            live = inst.list_models()
+        except ProviderError as exc:
+            print(f"         verify: {exc}")
+            continue
+        if not live:
+            print("         verify: could not retrieve a live model list")
+        elif inst.model in live:
+            print(f"         verify: OK — '{inst.model}' is live")
+        else:
+            sample = ", ".join(sorted(live)[:5])
+            print(f"         verify: STALE — '{inst.model}' not found among "
+                  f"{len(live)} live model(s), e.g. {sample}")
     return 0
 
 
@@ -1263,6 +1293,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_report)
 
     sp = sub.add_parser("providers", help="list AI providers")
+    sp.add_argument("--verify", action="store_true",
+                    help="query each configured provider's live model list and "
+                         "flag a default/selected model id that no longer exists")
     sp.set_defaults(func=cmd_providers)
 
     sp = sub.add_parser(

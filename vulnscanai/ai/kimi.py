@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from .. import http
-from .base import AIProvider, ProviderError
+from .base import AIProvider, ProviderError, list_models_openai_compatible
 
 
 class KimiProvider(AIProvider):
@@ -53,3 +53,9 @@ class KimiProvider(AIProvider):
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise ProviderError("unexpected Kimi response shape") from exc
+
+    def list_models(self):
+        if not self.api_key:
+            raise ProviderError("MOONSHOT_API_KEY is not set")
+        base = os.environ.get("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1").rstrip("/")
+        return list_models_openai_compatible("Kimi", base, self.api_key, self.timeout)

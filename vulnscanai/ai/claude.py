@@ -25,6 +25,7 @@ class ClaudeProvider(AIProvider):
     ]
     api_key_env = "ANTHROPIC_API_KEY"
     endpoint = "https://api.anthropic.com/v1/messages"
+    models_endpoint = "https://api.anthropic.com/v1/models"
     api_version = "2023-06-01"
 
     def complete(self, system: str, user: str) -> str:
@@ -70,3 +71,20 @@ class ClaudeProvider(AIProvider):
                     "another model or provider for this finding")
             raise ProviderError("empty response from Claude")
         return text
+
+    def list_models(self):
+        if not self.api_key:
+            raise ProviderError("ANTHROPIC_API_KEY is not set")
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": self.api_version,
+        }
+        try:
+            data = http.get_json(f"{self.models_endpoint}?limit=1000", headers=headers,
+                                 timeout=self.timeout)
+        except http.HttpError as exc:
+            raise ProviderError(f"Claude API error: {exc}") from exc
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            raise ProviderError("unexpected Claude model-list response shape")
+        return [m["id"] for m in items if isinstance(m, dict) and isinstance(m.get("id"), str)]
