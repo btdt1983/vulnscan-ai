@@ -186,8 +186,7 @@ class TestProviders(unittest.TestCase):
     def test_openai_sends_no_temperature(self):
         # The GPT-5 reasoning models 400 on any temperature other than the
         # default ("does not support 0.1 with this model"), which would break
-        # every remediation. The sibling OpenAI-compatible providers still send
-        # it because their APIs accept it.
+        # every remediation.
         import vulnscanai.ai.openai as O
         captured = {}
 
@@ -205,6 +204,50 @@ class TestProviders(unittest.TestCase):
             O.http.post_json = orig
         self.assertNotIn("temperature", captured)
         self.assertEqual(captured["model"], "gpt-5.6-terra")
+
+    def test_kimi_sends_no_temperature(self):
+        # Moonshot fixes temperature at 1.0 for the K3 series and rejects any
+        # other value.
+        import vulnscanai.ai.kimi as K
+        captured = {}
+
+        def fake_post(url, payload, headers=None, timeout=None):
+            captured.update(payload)
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+        orig = K.http.post_json
+        K.http.post_json = fake_post
+        try:
+            p = K.KimiProvider()
+            p.api_key = "test"
+            p.complete("sys", "user")
+        finally:
+            K.http.post_json = orig
+        self.assertNotIn("temperature", captured)
+        self.assertEqual(captured["model"], "kimi-k3")
+
+    def test_mistral_reads_string_and_chunked_content(self):
+        import vulnscanai.ai.mistral as M
+        chunks = [
+            {"type": "thinking",
+             "thinking": [{"type": "text", "text": "{\"draft\": 1}"}]},
+            {"type": "text", "text": "{\"final\": 2}"},
+        ]
+        orig = M.http.post_json
+        try:
+            p = M.MistralProvider()
+            p.api_key = "test"
+            for content in ('{"final": 2}', chunks):
+                M.http.post_json = lambda *a, _c=content, **k: {
+                    "choices": [{"message": {"content": _c}}]}
+                self.assertEqual(p.complete("sys", "user"), '{"final": 2}')
+            for content in (None, "", chunks[:1]):
+                M.http.post_json = lambda *a, _c=content, **k: {
+                    "choices": [{"message": {"content": _c}}]}
+                with self.assertRaises(M.ProviderError):
+                    p.complete("sys", "user")
+        finally:
+            M.http.post_json = orig
 
     def test_gemini_sends_no_temperature_and_requests_json(self):
         # Gemini 3 deprecated temperature/top_p/top_k -- see the module

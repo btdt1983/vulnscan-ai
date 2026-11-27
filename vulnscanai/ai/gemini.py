@@ -40,7 +40,7 @@ class GeminiProvider(AIProvider):
     default_model = "gemini-3.8-flash"
     known_models = [
         "gemini-3.8-flash",               # balanced default, strongest on code/agents
-        "gemini-2.5-pro",                 # deeper reasoning (no stable Gemini 3 Pro yet)
+        "gemini-4-hydrogen",              # Gemini 4, everyday coding/agentic work
         "gemini-3.5-flash-lite",          # fastest / cheapest
     ]
     api_key_env = "GEMINI_API_KEY"

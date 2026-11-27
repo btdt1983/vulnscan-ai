@@ -7,6 +7,12 @@ Mistral's API takes the always-current '-latest' alias per tier, not a bare
 display name — 'mistral-small-4' is the marketing name for the model served at
 'mistral-small-latest', not a model id itself (a 2026-08 audit shipped the
 display name into the model field by mistake; every request would have 400'd).
+
+Mistral Large 4 reasons by default and then returns 'message.content' as a list
+of typed chunks (thinking + text) instead of a plain string; only the text
+chunks are the answer. It has no confirmed '-latest' alias, hence the
+versioned id.
+
 Point MISTRAL_BASE_URL at a gateway to override the endpoint.
 """
 
@@ -23,8 +29,7 @@ class MistralProvider(AIProvider):
     default_model = "mistral-small-latest"
     known_models = [
         "mistral-small-latest",           # Mistral Small 4 (open-weights default)
-        "mistral-medium-latest",          # Mistral Medium 3.5 (stronger general model)
-        "mistral-large-latest",           # Mistral Large 3 (flagship)
+        "mistral-large-4-0",              # Mistral Large 4 (flagship, reasoning)
         "codestral-latest",               # Codestral (code-specialised)
     ]
     api_key_env = "MISTRAL_API_KEY"
@@ -52,9 +57,16 @@ class MistralProvider(AIProvider):
         except http.HttpError as exc:
             raise ProviderError(f"Mistral API error: {exc}") from exc
         try:
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise ProviderError("unexpected Mistral response shape") from exc
+        if isinstance(content, list):
+            content = "".join(
+                c.get("text", "") for c in content
+                if isinstance(c, dict) and c.get("type") == "text")
+        if not content:
+            raise ProviderError("empty response from Mistral")
+        return content
 
     def list_models(self):
         if not self.api_key:

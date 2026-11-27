@@ -548,7 +548,7 @@ Provider keys (set in the environment):
 | `claude` | `ANTHROPIC_API_KEY` | default |
 | `openai` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` optional |
 | `gemini` | `GEMINI_API_KEY` | |
-| `kimi` | `MOONSHOT_API_KEY` | `MOONSHOT_BASE_URL` optional |
+| `kimi` | `MOONSHOT_API_KEY` | `MOONSHOT_BASE_URL` optional; use `https://api.moonshot.ai/v1` for platform.kimi.ai accounts |
 | `deepseek` | `DEEPSEEK_API_KEY` | DeepSeek V4.1 Flash; `DEEPSEEK_BASE_URL` optional |
 | `mistral` | `MISTRAL_API_KEY` | Mistral Small 4; `MISTRAL_BASE_URL` optional |
 | `local` | (none) | `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT` (e.g. StarCoder 2) |

@@ -10,7 +10,7 @@
 
 Name:           vulnscan-ai
 Epoch:          1
-Version:        0.4.18
+Version:        0.4.19
 Release:        1%{?dist}
 Summary:        RHEL vulnerability scanner with AI-assisted, approval-gated remediation
 
@@ -120,6 +120,22 @@ install -d -m0750 %{buildroot}%{_sharedstatedir}/%{name}/reports
 %systemd_postun_with_restart %{name}-dashboard.service
 
 %changelog
+* Fri Nov 27 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.19-1
+- Fix: the kimi provider no longer sends `temperature`. Moonshot fixes it
+  at 1.0 for the K3 series and documents an error for any other value, so
+  requests with the default model kimi-k3 are expected to have failed.
+- Fix: the mistral provider reads list-shaped replies. Mistral Large 4
+  reasons by default and returns the answer as typed content chunks; only
+  the text chunks are used. An empty reply is now reported as such.
+- Model menus: kimi drops kimi-k2.7-code and kimi-k2.6 (being deprecated)
+  for kimi-k3.1-pro and kimi-k3.1-pro-highspeed; gemini replaces
+  gemini-2.5-pro (shut down 2026-12-01) with gemini-4-hydrogen; mistral
+  replaces mistral-medium-latest (deprecated) and mistral-large-latest
+  with mistral-large-4-0. Default models are unchanged.
+- Docs: MOONSHOT_BASE_URL for international (platform.kimi.ai) accounts.
+- The optional pdf extra now requires reportlab >= 3.6.13 (CVE-2023-33733).
+- Model ids and request shapes follow vendor documentation; they were not
+  executed against a live API with a real key.
 * Sat Oct 03 2026 vulnscan-ai <noreply@example.invalid> - 1:0.4.18-1
 - New: `providers --verify` queries each configured AI provider's own
   live model-list endpoint and flags a default/selected model id that no
